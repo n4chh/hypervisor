@@ -30,7 +30,7 @@ pub fn build(b: *std.Build) void {
         "-m",
         "512M",
         "-bios",
-        "/usr/share/ovmf/OVMF.fd",
+        "/usr/share/edk2-ovmf/OVMF_CODE.fd",
         "-drive",
         b.fmt("file=fat:rw:{s}/{s},format=raw", .{b.install_path, out_dir_name}),
         "-nographic",
