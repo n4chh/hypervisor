@@ -92,9 +92,14 @@ typedef struct _EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL {
 ```
 
 ### Boot Services
-During boot we mentioned that resourced are owned by the firmware. Boot services are functions that acts as interfaces to communicate and manage those services.
+During boot we mentioned that the computer resources are owned by the firmware. Boot services are functions that acts as interfaces to communicate and manage those services.
 This functions are categorized as `global`, if they manage services and are available in all platforms (as services are always available in all platforms), or as `handle-based`, if they receive a handle to manage an speciffic device that may be not available in all platforms
 
 The main objective of the boot service is to assist UEFI OS in preparing to boot the operating system. When the UEFI loader takes the control of the system and completes OS boot process, the operating system will call `ExitBootServices()` indicating that boot has been successful and is able to assume control of platform and resources.
 
 ### Runtime Services
+Once UEFI OS loader takes control of the system and completes the operating system boot process, runtime services should be the interface used to interact with the resources of the computer.
+
+
+
+If any `EFI_RUNTIME_SERVICES` calls are not supported for use by the OS at runtime an `EFI_PROPERTIES_TABLE` (an entry inside `EFI_CONFIGURATION_TABLE`) must describe the supported services.
