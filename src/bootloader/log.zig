@@ -1,4 +1,6 @@
 const std =  @import("std");
+const build_options = @import("build_options");
+
 const stdlog = std.log;
 // Create a drain function for the UefiWriter vtable
 //
@@ -29,6 +31,8 @@ var UefiWriter = std.Io.Writer{
 // Must match the vtable's expected error type.
 const LogError = std.Io.Writer.Error;
 
+// Let's have this as const, there is no need to change the log on runtime (yet)
+const LogLevel: std.Level = build_options.log_level;
 
 
 // Create the main function that implement the Zig's log function
@@ -38,10 +42,15 @@ fn log(
     comptime fmt: []const u8,
     args: anytype
 ) void {
-    _ = level;
-    _ = scope;
-    // This function has change from version 15.
-    std.Io.Writer.print(&UefiWriter, fmt ++ "\r\n", args) catch unreachable;
+    const scope_str = if (scope == .default) ": " else "(" ++ @tagName(scope) ++ "): ";
+    const level_str = "[" ++ @tagName(level) ++ "] ";
+
+    // This function has changed from version 15.
+    if (LogLevel > level) return;
+    std.Io.Writer.print(&UefiWriter,
+        level_str ++ scope_str
+        ++ fmt 
+        ++ "\r\n", args) catch unreachable;
 }
 
 pub const default_log_options = std.Options{

@@ -1,7 +1,14 @@
 const std = @import("std");
+const surtr = @import("src/bootloader");
 
 pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
+    const log_level_str = b.option([] const u8, "log-level", "Log level of the application.") orelse "info";
+    const log_level = std.meta.stringToEnum(std.log.Level, log_level_str) orelse @panic("Invalid log level provided");
+
+    const build_options = b.addOptions();
+    build_options.addOption(std.log.Level, "log_level", log_level);
+
     const bootloader = b.addExecutable(.{
         .name = "BOOTX64.EFI",
         .root_module = b.createModule(.{
@@ -14,6 +21,9 @@ pub fn build(b: *std.Build) void {
         }),
         .linkage = .static,
     });
+
+
+    bootloader.root_module.addOptions("build_options", build_options);
     
     b.installArtifact(bootloader);
 
@@ -23,7 +33,6 @@ pub fn build(b: *std.Build) void {
         b.fmt("{s}/efi/boot/{s}", .{out_dir_name, bootloader.name}),
     );
     b.getInstallStep().dependOn(&install_bootloader.step);
-
 
     const ovmf_path = b.option([]const u8, "ovmf-path", "Path to OVMF firmware file") orelse findOvmfPath(b);
 
