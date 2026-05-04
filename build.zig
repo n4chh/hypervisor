@@ -25,12 +25,14 @@ pub fn build(b: *std.Build) void {
     b.getInstallStep().dependOn(&install_bootloader.step);
 
 
+    const ovmf_path = b.option([]const u8, "ovmf-path", "Path to OVMF firmware file") orelse findOvmfPath(b);
+
     const qemu_args = [_][]const u8{
         "qemu-system-x86_64",
         "-m",
         "512M",
         "-bios",
-        "/usr/share/edk2-ovmf/OVMF_CODE.fd",
+        ovmf_path,
         "-drive",
         b.fmt("file=fat:rw:{s}/{s},format=raw", .{b.install_path, out_dir_name}),
         "-nographic",
@@ -48,6 +50,32 @@ pub fn build(b: *std.Build) void {
 
     const run_qemu_cmd = b.step("run", "Run QEMU");
     run_qemu_cmd.dependOn(&qemu_cmd.step);
+}
 
-
+// Find OVMF firmware device 
+fn findOvmfPath(b: *std.Build) []const u8 {
+    const candidates: []const []const u8 = switch (b.graph.host.result.os.tag) {
+        .macos => &.{
+            "/opt/homebrew/share/qemu/edk2-x86_64-code.fd",   // Homebrew (Apple Silicon)
+            "/usr/local/share/qemu/edk2-x86_64-code.fd",      // Homebrew (Intel)
+        },
+        .linux => &.{
+            "/usr/share/edk2-ovmf/OVMF_CODE.fd",              // Gentoo
+            "/usr/share/edk2/ovmf/OVMF_CODE.fd",              // Fedora
+            "/usr/share/OVMF/OVMF_CODE.fd",                   // Debian/Ubuntu
+            "/usr/share/ovmf/OVMF.fd",                        // Ubuntu (alt)
+            "/usr/share/edk2-ovmf/x64/OVMF_CODE.fd",         // Arch
+        },
+        else => &.{},
+    };
+    for (candidates) |path| {
+        std.Io.Dir.accessAbsolute(std.Io.Threaded.global_single_threaded.io(), path, .{}) catch continue;
+        return path;
+    }
+    std.debug.print(
+        \\error: OVMF firmware not found. Specify the path manually with:
+        \\  zig build -Dovmf-path=<path>
+        \\
+    , .{});
+    std.process.exit(1);
 }
