@@ -3,8 +3,8 @@ const surtr = @import("src/bootloader");
 
 pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
-    const log_level_str = b.option([] const u8, "log-level", "Log level of the application.") orelse "info";
-    const log_level = std.meta.stringToEnum(std.log.Level, log_level_str) orelse @panic("Invalid log level provided");
+    const log_level_str = b.option([]const u8, "log-level", "Log level of the application.") orelse "info";
+    const log_level: std.log.Level = std.meta.stringToEnum(std.log.Level, log_level_str) orelse @panic("Invalid log level provided");
 
     const build_options = b.addOptions();
     build_options.addOption(std.log.Level, "log_level", log_level);
@@ -22,15 +22,13 @@ pub fn build(b: *std.Build) void {
         .linkage = .static,
     });
 
-
     bootloader.root_module.addOptions("build_options", build_options);
-    
     b.installArtifact(bootloader);
 
     const out_dir_name = "img";
     const install_bootloader = b.addInstallFile(
         bootloader.getEmittedBin(),
-        b.fmt("{s}/efi/boot/{s}", .{out_dir_name, bootloader.name}),
+        b.fmt("{s}/efi/boot/{s}", .{ out_dir_name, bootloader.name }),
     );
     b.getInstallStep().dependOn(&install_bootloader.step);
 
@@ -43,7 +41,7 @@ pub fn build(b: *std.Build) void {
         "-bios",
         ovmf_path,
         "-drive",
-        b.fmt("file=fat:rw:{s}/{s},format=raw", .{b.install_path, out_dir_name}),
+        b.fmt("file=fat:rw:{s}/{s},format=raw", .{ b.install_path, out_dir_name }),
         "-nographic",
         "-serial",
         "mon:stdio",
@@ -61,19 +59,19 @@ pub fn build(b: *std.Build) void {
     run_qemu_cmd.dependOn(&qemu_cmd.step);
 }
 
-// Find OVMF firmware device 
+// Find OVMF firmware device
 fn findOvmfPath(b: *std.Build) []const u8 {
     const candidates: []const []const u8 = switch (b.graph.host.result.os.tag) {
         .macos => &.{
-            "/opt/homebrew/share/qemu/edk2-x86_64-code.fd",   // Homebrew (Apple Silicon)
-            "/usr/local/share/qemu/edk2-x86_64-code.fd",      // Homebrew (Intel)
+            "/opt/homebrew/share/qemu/edk2-x86_64-code.fd", // Homebrew (Apple Silicon)
+            "/usr/local/share/qemu/edk2-x86_64-code.fd", // Homebrew (Intel)
         },
         .linux => &.{
-            "/usr/share/edk2-ovmf/OVMF_CODE.fd",              // Gentoo
-            "/usr/share/edk2/ovmf/OVMF_CODE.fd",              // Fedora
-            "/usr/share/OVMF/OVMF_CODE.fd",                   // Debian/Ubuntu
-            "/usr/share/ovmf/OVMF.fd",                        // Ubuntu (alt)
-            "/usr/share/edk2-ovmf/x64/OVMF_CODE.fd",         // Arch
+            "/usr/share/edk2-ovmf/OVMF_CODE.fd", // Gentoo
+            "/usr/share/edk2/ovmf/OVMF_CODE.fd", // Fedora
+            "/usr/share/OVMF/OVMF_CODE.fd", // Debian/Ubuntu
+            "/usr/share/ovmf/OVMF.fd", // Ubuntu (alt)
+            "/usr/share/edk2-ovmf/x64/OVMF_CODE.fd", // Arch
         },
         else => &.{},
     };
