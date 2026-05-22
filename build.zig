@@ -1,14 +1,14 @@
 const std = @import("std");
-const surtr = @import("src/bootloader");
+const IMG_DIR_NAME = "img";
 
-pub fn build(b: *std.Build) void {
-    const optimize = b.standardOptimizeOption(.{});
+pub fn buildUefi(b: *std.Build) void {
     const log_level_str = b.option([]const u8, "log-level", "Log level of the application.") orelse "info";
     const log_level: std.log.Level = std.meta.stringToEnum(std.log.Level, log_level_str) orelse @panic("Invalid log level provided");
 
     const build_options = b.addOptions();
     build_options.addOption(std.log.Level, "log_level", log_level);
 
+    // Create the bootloader executable
     const bootloader = b.addExecutable(.{
         .name = "BOOTX64.EFI",
         .root_module = b.createModule(.{
@@ -17,7 +17,7 @@ pub fn build(b: *std.Build) void {
                 .cpu_arch = .x86_64,
                 .os_tag = .uefi,
             }),
-            .optimize = optimize,
+            .optimize = b.standardOptimizeOption(.{}),
         }),
         .linkage = .static,
     });
@@ -25,14 +25,42 @@ pub fn build(b: *std.Build) void {
     bootloader.root_module.addOptions("build_options", build_options);
     b.installArtifact(bootloader);
 
-    const out_dir_name = "img";
+    // Place the executable in the EFI fs
     const install_bootloader = b.addInstallFile(
         bootloader.getEmittedBin(),
-        b.fmt("{s}/efi/boot/{s}", .{ out_dir_name, bootloader.name }),
+        b.fmt("{s}/efi/boot/{s}", .{ IMG_DIR_NAME, bootloader.name }),
     );
     b.getInstallStep().dependOn(&install_bootloader.step);
+}
 
+pub fn buildKernel(b: *std.Build) void {
+    // Create the kernel executable
+    const kernel = b.addExecutable(.{
+        .name = "kernel.elf",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/kernel/main.zig"),
+            .target = b.resolveTargetQuery(.{
+                .os_tag = .freestanding,
+                .cpu_arch = .x86_64,
+                .ofmt = .elf,
+            }),
+            .code_model = .kernel,
+        }),
+        .linkage = .static,
+    });
+    b.installArtifact(kernel);
+    // Place the kernel inside EFI
+    const install_kernel = b.addInstallFile(
+        kernel.getEmittedBin(),
+        b.fmt("{s}/{s}", .{ IMG_DIR_NAME, kernel.name }),
+    );
+    b.getInstallStep().dependOn(&install_kernel.step);
+}
+
+pub fn build(b: *std.Build) void {
     const ovmf_path = b.option([]const u8, "ovmf-path", "Path to OVMF firmware file") orelse findOvmfPath(b);
+    buildUefi(b);
+    buildKernel(b);
 
     const qemu_args = [_][]const u8{
         "qemu-system-x86_64",
@@ -41,7 +69,7 @@ pub fn build(b: *std.Build) void {
         "-bios",
         ovmf_path,
         "-drive",
-        b.fmt("file=fat:rw:{s}/{s},format=raw", .{ b.install_path, out_dir_name }),
+        b.fmt("file=fat:rw:{s}/{s},format=raw", .{ b.install_path, IMG_DIR_NAME }),
         "-nographic",
         "-serial",
         "mon:stdio",
