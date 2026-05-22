@@ -30,8 +30,12 @@ const LogLevel: std.log.Level = @enumFromInt(@intFromEnum(build_options.log_leve
 // Create the main function that implement the Zig's log function
 fn log(comptime level: std.log.Level, comptime scope: @TypeOf(.enum_literal), comptime fmt: []const u8, args: anytype) void {
     const scope_str = if (scope == .default) ": " else "(" ++ @tagName(scope) ++ "): ";
-    const level_str = "[" ++ @tagName(level) ++ "] ";
-
+    const level_str ="[" ++  switch (level)  {
+        .debug => "\x1b[1;32m",
+        .info => "\x1b[1;34m",
+        .warn => "\x1b[1;33m",
+        .err => "\x1b[1;31m",
+    } ++ @tagName(level) ++ "\x1b[0m] ";
     // This function has changed from version 15.
     if (@intFromEnum(LogLevel) > @intFromEnum(level)) return;
     std.Io.Writer.print(&UefiWriter, level_str ++ scope_str ++ fmt ++ "\r\n", args) catch unreachable;
