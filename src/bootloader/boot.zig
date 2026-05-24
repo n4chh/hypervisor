@@ -1,15 +1,86 @@
-const std  = @import("std");
+const std = @import("std");
 const uefi = std.os.uefi;
 const blog = @import("log.zig");
+const build_options = @import("build_options");
+const log = std.log.scoped(.bootloader);
 
 // Desipite this is a global variable, the overriden of the function must be done on the
 // root file.
-// Ref: https://github.com/ziglang/zig/blob/master/lib/std/std.zig#L111 
+// Ref: https://github.com/ziglang/zig/blob/master/lib/std/std.zig#L111
 pub const std_options = blog.default_log_options;
 
+fn loadKernel(kernel: **uefi.protocol.File, boot_services: *uefi.tables.BootServices) uefi.Status {
+    // Load kernel file into the UEFI application.
+    // Remember that all operations with periferials must be done using uefi services
+
+    // Brief zig explanation of the order of catching and unwrapping:
+    //
+    // locateProtocol(...) LocateProtocolError!?*Protocol
+    // function returns either an optional value or an error (imagine ! acts like a separator between 
+    // the 2 possible values: Error|Optional). However we want a real value.
+    // First we need to handle every result that the function may return:
+    //  - Error is returned: We must handle it, for example using catch.
+    //  - An Optional is returned: We need to ensure if our optional holds a value or not (is null)
+    //    before we use it. To do this in the same line, after we "catch" an error we are able to
+    //    unwrap the optional into a value (e.g. using orelse to handle both scenarios).
+    //
+    // The order of our handling matters, before we can't unwrap an optional if we didn't ensure we don't 
+    // have an error.
+    //
+    // Diagram:
+    // if error -> abort -> else if optional == null -> abort -> else -> value
+    //
+    const fs: *uefi.protocol.SimpleFileSystem =
+        boot_services.locateProtocol(uefi.protocol.SimpleFileSystem, null) catch |err| {
+            log.err("Couldn't locate the filesystem protocol {}", .{err});
+            return .aborted;
+        } orelse {
+            log.err("Filesystem protocol returned null.", .{});
+            return .aborted;
+        };
+    log.info("Retrieved file system handler: {*}", .{fs});
+    log.debug("File system: {}", .{fs});
+
+    const root_dir = fs.openVolume() catch |err| {
+        log.err("Couldn't open root directory of volume: {}", .{err});
+        return .aborted;
+    };
+    log.info("Root directory of volume opened: {*}", .{root_dir});
+    log.debug("Volume: {}", .{root_dir});
+
+    // we need to figure out a better way of converting from utf8 to utf16 
+    var buf: [1000]u8 = undefined;
+    var fba: std.heap.FixedBufferAllocator = .init(&buf);
+    const allocator = fba.allocator();
+    const kernel_name = std.unicode.utf8ToUtf16LeAllocZ(allocator, build_options.kernel_main) catch |err| {
+        log.info("Couldn't generate kernel name: {}", .{err});
+        return .aborted;
+    };
+
+    kernel.* = root_dir.open(kernel_name, uefi.protocol.File.OpenMode.read, .{}) catch |err| {
+        log.err("Couldn't open kernel file: {}",.{err});
+        return .aborted;
+    };
+    return .success;
+}
+
 pub fn main() uefi.Status {
-    const log = std.log.scoped(.bootloader);
     log.info("Hello from UEFI!!", .{});
+    var kernel: *uefi.protocol.File = undefined;
+    const boot_services: *uefi.tables.BootServices = uefi.system_table.boot_services orelse {
+        log.err("Failed to get boot services.", .{});
+        return .aborted;
+    };
+    log.info("Located boot_services at {*}", .{boot_services});
+    log.debug("Boot Services: {}", .{boot_services});
+
+    if (loadKernel(&kernel, boot_services) != .success) {
+        return .aborted;
+    }
+
+    log.info("Kernel loaded",.{});
+    log.debug("Kernel: {}", .{kernel});
+
     while (true)
         asm volatile ("hlt");
 

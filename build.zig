@@ -1,13 +1,7 @@
 const std = @import("std");
 const IMG_DIR_NAME = "img";
 
-pub fn buildUefi(b: *std.Build) void {
-    const log_level_str = b.option([]const u8, "log-level", "Log level of the application.") orelse "info";
-    const log_level: std.log.Level = std.meta.stringToEnum(std.log.Level, log_level_str) orelse @panic("Invalid log level provided");
-
-    const build_options = b.addOptions();
-    build_options.addOption(std.log.Level, "log_level", log_level);
-
+pub fn buildUefi(b: *std.Build) *std.Build.Step.Compile {
     // Create the bootloader executable
     const bootloader = b.addExecutable(.{
         .name = "BOOTX64.EFI",
@@ -22,7 +16,6 @@ pub fn buildUefi(b: *std.Build) void {
         .linkage = .static,
     });
 
-    bootloader.root_module.addOptions("build_options", build_options);
     b.installArtifact(bootloader);
 
     // Place the executable in the EFI fs
@@ -31,9 +24,14 @@ pub fn buildUefi(b: *std.Build) void {
         b.fmt("{s}/efi/boot/{s}", .{ IMG_DIR_NAME, bootloader.name }),
     );
     b.getInstallStep().dependOn(&install_bootloader.step);
+    return bootloader;
 }
 
-pub fn buildKernel(b: *std.Build) void {
+
+
+
+
+pub fn buildKernel(b: *std.Build) *std.Build.Step.Compile {
     // Create the kernel executable
     const kernel = b.addExecutable(.{
         .name = "kernel.elf",
@@ -55,12 +53,24 @@ pub fn buildKernel(b: *std.Build) void {
         b.fmt("{s}/{s}", .{ IMG_DIR_NAME, kernel.name }),
     );
     b.getInstallStep().dependOn(&install_kernel.step);
+
+    return kernel;
 }
 
 pub fn build(b: *std.Build) void {
     const ovmf_path = b.option([]const u8, "ovmf-path", "Path to OVMF firmware file") orelse findOvmfPath(b);
-    buildUefi(b);
-    buildKernel(b);
+    const log_level_str = b.option([]const u8, "log-level", "Log level of the application.") orelse "info";
+    const log_level: std.log.Level = std.meta.stringToEnum(std.log.Level, log_level_str) orelse @panic("Invalid log level provided");
+
+    const build_options = b.addOptions();
+    build_options.addOption(std.log.Level, "log_level", log_level);
+
+    const bootloader = buildUefi(b);
+    const kernel = buildKernel(b);
+
+    build_options.addOption([] const u8, "kernel_main", kernel.name);
+    bootloader.root_module.addOptions("build_options", build_options);
+    
 
     const qemu_args = [_][]const u8{
         "qemu-system-x86_64",
