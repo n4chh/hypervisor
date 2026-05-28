@@ -3,11 +3,44 @@ const uefi = std.os.uefi;
 const blog = @import("log.zig");
 const build_options = @import("build_options");
 const log = std.log.scoped(.bootloader);
+const Reader = std.Io.Reader;
 
 // Desipite this is a global variable, the overriden of the function must be done on the
 // root file.
 // Ref: https://github.com/ziglang/zig/blob/master/lib/std/std.zig#L111
 pub const std_options = blog.default_log_options;
+
+fn parseKernel(kernel: **uefi.protocol.File, boot_services: *uefi.tables.BootServices) uefi.Status {
+    const header_size: usize = @sizeOf(std.elf.Elf64.Ehdr);
+    const header_buffer: []align(8) u8 = boot_services.allocatePool(.loader_data, header_size) catch |err| {
+        log.err("Couldn't allocate memory to read the kernel header: {}", .{err});
+        return .aborted;
+    };
+
+    const read_bytes = kernel.*.read(header_buffer) catch |err| {
+        log.err("Error reading the kernel {}", .{err});
+        return .aborted;
+    };
+    log.info("Kernel loaded on memory", .{});
+    log.debug("Readed bytes from kernel file: {d}", .{read_bytes});
+    // Is safe to constCast here because there is no modification 
+    // of the reader pointer inside the read function.
+    const header = std.elf.Header.read(@constCast(&std.Io.Reader.fixed(header_buffer))) catch |err| {
+        log.err("Error parsing headers of kernel binary: {}", .{err});
+        return .aborted;
+    };
+    log.info(\\Kernel headers:
+              \\    Entry Point: 0x{X}
+              \\    ABI: {}
+              \\    header.endian: {}
+              , .{
+                  header.entry,
+                  header.os_abi,
+                  header.endian,
+              });
+    log.debug("Kernel headers parsed: {}", .{header});
+    return .success;
+}
 
 fn loadKernel(kernel: **uefi.protocol.File, boot_services: *uefi.tables.BootServices) uefi.Status {
     // Load kernel file into the UEFI application.
@@ -16,7 +49,7 @@ fn loadKernel(kernel: **uefi.protocol.File, boot_services: *uefi.tables.BootServ
     // Brief zig explanation of the order of catching and unwrapping:
     //
     // locateProtocol(...) LocateProtocolError!?*Protocol
-    // function returns either an optional value or an error (imagine ! acts like a separator between 
+    // function returns either an optional value or an error (imagine ! acts like a separator between
     // the 2 possible values: Error|Optional). However we want a real value.
     // First we need to handle every result that the function may return:
     //  - Error is returned: We must handle it, for example using catch.
@@ -24,7 +57,7 @@ fn loadKernel(kernel: **uefi.protocol.File, boot_services: *uefi.tables.BootServ
     //    before we use it. To do this in the same line, after we "catch" an error we are able to
     //    unwrap the optional into a value (e.g. using orelse to handle both scenarios).
     //
-    // The order of our handling matters, before we can't unwrap an optional if we didn't ensure we don't 
+    // The order of our handling matters, before we can't unwrap an optional if we didn't ensure we don't
     // have an error.
     //
     // Diagram:
@@ -48,7 +81,7 @@ fn loadKernel(kernel: **uefi.protocol.File, boot_services: *uefi.tables.BootServ
     log.info("Root directory of volume opened: {*}", .{root_dir});
     log.debug("Volume: {}", .{root_dir});
 
-    // we need to figure out a better way of converting from utf8 to utf16 
+    // we need to figure out a better way of converting from utf8 to utf16
     var buf: [1000]u8 = undefined;
     var fba: std.heap.FixedBufferAllocator = .init(&buf);
     const allocator = fba.allocator();
@@ -58,7 +91,7 @@ fn loadKernel(kernel: **uefi.protocol.File, boot_services: *uefi.tables.BootServ
     };
 
     kernel.* = root_dir.open(kernel_name, uefi.protocol.File.OpenMode.read, .{}) catch |err| {
-        log.err("Couldn't open kernel file: {}",.{err});
+        log.err("Couldn't open kernel file: {}", .{err});
         return .aborted;
     };
     return .success;
@@ -78,8 +111,11 @@ pub fn main() uefi.Status {
         return .aborted;
     }
 
-    log.info("Kernel loaded",.{});
+    log.info("Kernel loaded", .{});
     log.debug("Kernel: {}", .{kernel});
+    if (parseKernel(&kernel, boot_services) != .success) {
+        return .aborted;
+    }
 
     while (true)
         asm volatile ("hlt");
