@@ -8,7 +8,9 @@ const builtin = @import("builtin");
 
 const x86_64 = @import("arch/x86_64/arch.zig");
 
-const impl = switch (builtin.target.cpu.arch) {
+// Ipmlementation of memory for different cpu architectures.
+pub const impl = switch (builtin.target.cpu.arch) {
+    .x86_64 => x86_64.page,
     else => @compileError("Unsupported platform."),
 };
 

@@ -4,6 +4,8 @@ const blog = @import("log.zig");
 const build_options = @import("build_options");
 const log = std.log.scoped(.bootloader);
 const Reader = std.Io.Reader;
+const arch = @import("arch.zig");
+
 
 // Desipite this is a global variable, the overriden of the function must be done on the
 // root file.
@@ -116,6 +118,16 @@ pub fn main() uefi.Status {
     if (parseKernel(&kernel, boot_services) != .success) {
         return .aborted;
     }
+    log.info("Alocatting memory", .{});
+    arch.impl.map4kTo(
+        0xFFFF_FFFF_DEAD_0000,
+        0x10_0000,
+        .read_write,
+        boot_services
+        ) catch |e| {
+            log.err("Memory error: {}", .{e});
+            return .aborted;
+    };
 
     while (true)
         asm volatile ("hlt");

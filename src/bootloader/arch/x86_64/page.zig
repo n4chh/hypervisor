@@ -1,3 +1,6 @@
+const am = @import("asm.zig");
+const std = @import("std");
+const uefi = @import("std").os.uefi;
 // Ref: Intel Software Developer Manual, Volume 3, Chapter 5, (5.3, 5.4 and 5.5)
 
 // Skipping PML5 by now ...
@@ -6,7 +9,16 @@ const TableType = enum {
     PDPTE,      // Page Directory Pointer Table Entry
     PDE,        // Page Directory Entry
     PTE,        // Page Table Entry
-}L;
+};
+
+// To avoid risk of mixing Phys address with Virtual ones, we define 2 types
+// that will indicate weather the address is physical or virtual.
+// We will also try to include a prefix to determine if a memory is virtual or physicall
+// to the name of the variable:
+//  - paddr/phys -> Physicall
+//  - vaddr/virt -> Virtual
+pub const Virt = u64;
+pub const Phys = u64;
 
 
 
@@ -67,11 +79,15 @@ fn EntryBase(_table_type: TableType) type {
         // if IA32_EFER.NXE = 0 is reserved
         xd: bool = false,
 
-        // To avoid risk of mixing Phys address with Virtual ones, we define 2 types
-        // that will indicate weather the address is physical or virtual.
-        pub const Virt = u64;
-        pub const Phys = u64;
 
+        const LowerType = switch(_table_type) {
+            .PML4E => .PDPTE,
+            .PDPTE => PDE,
+            .PDE => PTE,
+            .PTE => struct {},
+        };
+
+        // Methods
         pub inline fn address(self: Self) Phys {
             // We left shift this 12 bits because that's the way translation is performed
             // Ref: SDM Volume 3, Chapter 5, Section 5.2
@@ -79,6 +95,31 @@ fn EntryBase(_table_type: TableType) type {
             // but depending on the size of the page we must adjust the bits we shift.
             return @as(u64, @intCast(self.phys)) << 12;
         }
+
+        pub fn newMapPage(present: bool, phys: Phys) Self {
+            // by now we are only going to operate with 2MiB or with 4KiB pages,
+            // 1GiB will be disabled at compile time 
+            if (table_type == .PML4E) @compileError("PML4E can not map to a page.");
+            return Self{
+                .present = present,
+                .ps = true,
+                .us = false,
+                .rw = true,
+                .phys = @truncate(phys >> 12),
+            };
+        }
+        
+        pub fn newMapTable(table: [*]LowerType, present: bool) Self {
+            if (table_type == .PTE) @compileError("PTE can not point to a table.");
+            return Self{
+                .present = present,
+                .ps = true,
+                .us = false,
+                .rw = true,
+                .phys = @truncate(@intFromPtr(table) >> 12),
+            };
+        }
+
     };
 }
 
@@ -86,3 +127,122 @@ const PTE = EntryBase(.PTE);
 const PDE = EntryBase(.PDE);
 const PDPTE = EntryBase(.PDPTE);
 const PML4E = EntryBase(.PML4E);
+
+
+const page_mask_4k: u64 = 0xFFF;
+// This is pretty straight forward, every table will have 512 if pages is of 4KiB or 2MiB.
+// Look to linear addresses structure in the notes or SDM for more reference
+const num_table_entries = 512;
+fn getTable(T: type, addr: Phys) []T {
+    const ptr: [*]T = @ptrFromInt(addr & ~page_mask_4k);
+    return ptr[0..num_table_entries];
+}
+
+// As defined on SDM Volume 3 Section 5, first table will be located at CR3
+fn getPML4ETable(cr3: Phys) []PML4E {
+    return getTable(PML4E, cr3);
+}
+
+fn getPDPTETable(pml4_paddr: Phys) []PDPTE {
+    return getTable(PDPTE, pml4_paddr);
+}
+
+fn getPDETable(pdpte_paddr: Phys) []PDE {
+    return getTable(PDE, pdpte_paddr);
+}
+
+fn getPTETable(pde_paddr: Phys) []PTE {
+    return getTable(PTE, pde_paddr);
+}
+
+fn getEntry(T: type, vaddr: Virt, paddr: Phys) *T {
+    const table = getTable(T, paddr);
+    const shift = switch (T) {
+        PML4E => 39,
+        PDPTE => 30,
+        PDE => 21,
+        PTE => 12,
+        else => @compileError("Unsupported page entry type."),
+    };
+    return &table[(vaddr >> shift) & 0x1FF];
+}
+
+fn getPML4E(vaddr: Virt, cr3: Phys) *PML4E {
+    return getEntry(PML4E, vaddr, cr3);
+}
+
+fn getPDPTE(vaddr: Virt, pdpte_table_paddr: Phys) *PDPTE {
+    return getEntry(PDPTE, vaddr, pdpte_table_paddr);
+}
+
+fn getPDE(vaddr: Virt, pde_table_paddr: Phys) *PDE {
+    return getEntry(PDE, vaddr, pde_table_paddr);
+}
+
+fn getPTE(vaddr: Virt, pte_table_paddr: Phys) *PTE {
+    return getEntry(PTE, vaddr, pte_table_paddr);
+}
+
+pub const PageAttribute = enum {
+    // RO
+    read_only,
+    // RW 
+    read_write,
+    // RX
+    executable,
+};
+
+pub const PageError = error { NoMemory, NotPresent, NotCannonical, InvalidAddress, AlreadyMapped };
+pub fn map4kTo(vaddr: Virt, paddr: Phys, attr: PageAttribute, bs: *uefi.tables.BootServices) PageError!void {
+    const rw = switch (attr) {
+        .read_only, .executable => false,
+        .read_write => true,
+    };
+
+    const pml4e = getPML4E(vaddr, am.readCr3());
+    if (!pml4e.present) try allocateNewTable(PML4E, pml4e, bs);
+
+    const pdpte = getPDPTE(vaddr, pml4e.address());
+    if (!pdpte.present) try allocateNewTable(PDPTE, pdpte, bs);
+
+    const pde = getPDE(vaddr, pdpte.address());
+    if (!pde.present) try allocateNewTable(PDE, pde, bs);
+
+    const pte = getPTE(vaddr, pde.address());
+    if (pte.present) return PageError.AlreadyMapped;
+
+    var new_pte = PTE.newMapPage(true, paddr);
+    new_pte.rw = rw;
+    pte.* = new_pte;
+    // No need to flush TLB because the page was not present before
+    // But as documentation we can flush TLB by:
+    //  - Clearing PCIDE or PGE in CR4 if one of those flags are set (then restore it)
+    //  - Mov from CR3 to other register and then mov back again from that register to CR3
+    // Ref: Intel SDM, Volume 3 Chapter 14, Section 14.12.4
+}
+
+pub const kib = 1024;
+pub const page_size_4k = 4 * kib;
+
+pub fn allocateNewTable(T: type, entry: *T, bs: *uefi.tables.BootServices) PageError!void {
+    // TODO: call allocatePages with other memory type and observe behaviour.
+    // Hypervisor guide explicitly specifies that we use .boot_service_data memory type because we are 
+    // going to use this memory after the execution is transfered to the kernel. However, after I've read
+    // the UEFI manual, I couldn't find any explicit/implicit specification why we shouldn't use .loader_data
+    // (which imv is the one we should use as this is a UEFI application).
+    // Ref: https://uefi.org/specs/UEFI/2.10/07_Services_Boot_Services.html#memory-type-usage-after-exitbootservices
+    const ptr = bs.allocatePages(.any, .boot_services_data, 1) catch |e| {
+        std.log.err("Couldn't allocate page: {}", .{e});
+        return PageError.NoMemory;
+    };
+    const paddr: Phys = @intFromPtr(ptr);
+    // Couldn't find in the docs if clearing the memory is necesary but is a 
+    // good practice to set everything to 0 :)
+    clearPage(paddr);
+    entry.* = T.newMapTable(@ptrFromInt(paddr));
+}
+
+fn clearPage(paddr: Phys) void {
+    const page_ptr: [*]u8 = @ptrFromInt(paddr);
+    @memset(page_ptr[0..page_size_4k],0);
+}
