@@ -47,6 +47,7 @@ pub fn buildKernel(b: *std.Build) *std.Build.Step.Compile {
         .linkage = .static,
     });
     kernel.entry = .{.symbol_name = "kernelEntry"};
+    kernel.linker_script = b.path("src/kernel/linker.ld");
     b.installArtifact(kernel);
     // Place the kernel inside EFI
     const install_kernel = b.addInstallFile(
