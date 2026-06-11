@@ -81,7 +81,7 @@ fn EntryBase(_table_type: TableType) type {
 
 
         const LowerType = switch(_table_type) {
-            .PML4E => .PDPTE,
+            .PML4E => PDPTE,
             .PDPTE => PDE,
             .PDE => PTE,
             .PTE => struct {},
@@ -224,6 +224,18 @@ pub fn map4kTo(vaddr: Virt, paddr: Phys, attr: PageAttribute, bs: *uefi.tables.B
 pub const kib = 1024;
 pub const page_size_4k = 4 * kib;
 
+pub fn setPML4TableWritable(bs: *uefi.tables.BootServices) PageError!void {
+    const ptr = bs.allocatePages(.any, .boot_services_data, 1) catch |e| {
+        std.log.err("Couldn't allocate page: {}", .{e});
+        return PageError.NoMemory;
+    };
+    const new_pml4etable_ptr: [*]PML4E = @ptrFromInt(@intFromPtr(ptr.ptr));
+    const new_pml4etable = new_pml4etable_ptr[0..num_table_entries];
+    const orig_pml4etable = getPML4ETable(am.readCr3());
+    @memcpy(new_pml4etable, orig_pml4etable);
+    am.loadCr3(@intFromPtr(new_pml4etable));
+}
+
 pub fn allocateNewTable(T: type, entry: *T, bs: *uefi.tables.BootServices) PageError!void {
     // TODO: call allocatePages with other memory type and observe behaviour.
     // Hypervisor guide explicitly specifies that we use .boot_service_data memory type because we are 
@@ -235,11 +247,11 @@ pub fn allocateNewTable(T: type, entry: *T, bs: *uefi.tables.BootServices) PageE
         std.log.err("Couldn't allocate page: {}", .{e});
         return PageError.NoMemory;
     };
-    const paddr: Phys = @intFromPtr(ptr);
+    const paddr: Phys = @intFromPtr(ptr.ptr);
     // Couldn't find in the docs if clearing the memory is necesary but is a 
     // good practice to set everything to 0 :)
     clearPage(paddr);
-    entry.* = T.newMapTable(@ptrFromInt(paddr));
+    entry.* = T.newMapTable(@ptrFromInt(paddr), true);
 }
 
 fn clearPage(paddr: Phys) void {

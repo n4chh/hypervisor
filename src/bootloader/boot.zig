@@ -118,7 +118,14 @@ pub fn main() uefi.Status {
     if (parseKernel(&kernel, boot_services) != .success) {
         return .aborted;
     }
-    log.info("Alocatting memory", .{});
+    // I think I've found UEFI docs that warns you about page privileges:
+    // https://uefi.org/specs/UEFI/2.10/02_Overview.html#x64-platforms
+    log.debug("Setting CR3 to a writable page.", .{});
+    arch.impl.setPML4TableWritable(boot_services) catch |e| {
+        log.err("Memory error: {}", .{e});
+        return .aborted;
+    };
+    log.debug("Alocatting memory", .{});
     arch.impl.map4kTo(
         0xFFFF_FFFF_DEAD_0000,
         0x10_0000,
@@ -128,6 +135,7 @@ pub fn main() uefi.Status {
             log.err("Memory error: {}", .{e});
             return .aborted;
     };
+    log.info("Memory page allocated.", .{});
 
     while (true)
         asm volatile ("hlt");

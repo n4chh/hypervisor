@@ -10,6 +10,15 @@ Performing all the translations can be slow, that way the Translation Layer Buff
 
 Before we load our kernel, we must set a usable way of accessing ram, we will implement memory management for our hypervisor during the bootloader, taking advantage of UEFI services to access the hardware.
 
+A page fault is an exception that MMU raises when a process access to a region of the memory without the proper preparations to it.
+A page fault occurs when:
+- A page directory entry is not present in physical meory.
+- Attempting to load the instruction TLB with a translation for a non-executable page
+- A protection check (privileges, read/write permissions) failed.
+- A reserved bit in the page directory or tables is set to 1.
+
+When an exception happens, teh saved instruction pointer points to the instruction that cause the exception.
+Ref: [Page Fault](https://wiki.osdev.org/Exceptions#Page_Fault)
 
 ## Intel
 Memory paging is enabled by a `mov` instruction to `CR0`. There are 4 different type of memory paging modes:
