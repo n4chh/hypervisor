@@ -129,7 +129,7 @@ const PDPTE = EntryBase(.PDPTE);
 const PML4E = EntryBase(.PML4E);
 
 
-const page_mask_4k: u64 = 0xFFF;
+pub const page_mask_4k: u64 = 0xFFF;
 // This is pretty straight forward, every table will have 512 if pages is of 4KiB or 2MiB.
 // Look to linear addresses structure in the notes or SDM for more reference
 const num_table_entries = 512;

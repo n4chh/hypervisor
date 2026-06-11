@@ -5,7 +5,8 @@ const build_options = @import("build_options");
 const log = std.log.scoped(.bootloader);
 const Reader = std.Io.Reader;
 const arch = @import("arch.zig");
-
+const page_size = arch.impl.page_size_4k;
+const page_mask = arch.impl.page_mask_4k;
 
 // Desipite this is a global variable, the overriden of the function must be done on the
 // root file.
@@ -25,21 +26,22 @@ fn parseKernel(kernel: **uefi.protocol.File, boot_services: *uefi.tables.BootSer
     };
     log.info("Kernel loaded on memory", .{});
     log.debug("Readed bytes from kernel file: {d}", .{read_bytes});
-    // Is safe to constCast here because there is no modification 
+    // Is safe to constCast here because there is no modification
     // of the reader pointer inside the read function.
     const header = std.elf.Header.read(@constCast(&std.Io.Reader.fixed(header_buffer))) catch |err| {
         log.err("Error parsing headers of kernel binary: {}", .{err});
         return .aborted;
     };
-    log.info(\\Kernel headers:
-              \\    Entry Point: 0x{X}
-              \\    ABI: {}
-              \\    header.endian: {}
-              , .{
-                  header.entry,
-                  header.os_abi,
-                  header.endian,
-              });
+    log.info(
+        \\Kernel headers:
+        \\    Entry Point: 0x{X}
+        \\    ABI: {}
+        \\    header.endian: {}
+    , .{
+        header.entry,
+        header.os_abi,
+        header.endian,
+    });
     log.debug("Kernel headers parsed: {}", .{header});
     return .success;
 }
@@ -96,6 +98,26 @@ fn loadKernel(kernel: **uefi.protocol.File, boot_services: *uefi.tables.BootServ
         log.err("Couldn't open kernel file: {}", .{err});
         return .aborted;
     };
+
+    const Addr = std.elf.Elf64.Addr;
+    var kernel_start_virt: Addr = std.math.maxInt(Addr);
+    var kernel_start_phys: Addr = std.math.maxInt(Addr);
+    var kernel_end_phys: Addr = 0;
+    var iter = std.elf.Header.iterateProgramHeaders(kernel.*);
+    while (true) {
+        const header = iter.next() catch |e| {
+            log.err("Error iterating kernel headers {}.", .{e});
+            return .load_error;
+        } orelse break;
+        if (header.p_type != std.elf.PT_LOAD) continue;
+        if (header.p_vaddr < kernel_start_virt) kernel_start_virt = header.p_vaddr;
+        if (header.p_paddr < kernel_start_phys) kernel_start_phys = header.p_paddr;
+        if (header.p_paddr + header.p_memsz > kernel_end_phys) kernel_end_phys = header.p_paddr + header.p_memsz;
+    }
+
+    const pages_4kib = (kernel_end_phys - kernel_start_phys + (page_size - 1)) / page_size;
+    log.debug("Kernel image: 0x{X:0>16} - 0x{X:0>16} (0x{X} pages)", .{ kernel_start_phys, kernel_end_phys, pages_4kib });
+
     return .success;
 }
 
@@ -126,14 +148,9 @@ pub fn main() uefi.Status {
         return .aborted;
     };
     log.debug("Alocatting memory", .{});
-    arch.impl.map4kTo(
-        0xFFFF_FFFF_DEAD_0000,
-        0x10_0000,
-        .read_write,
-        boot_services
-        ) catch |e| {
-            log.err("Memory error: {}", .{e});
-            return .aborted;
+    arch.impl.map4kTo(0xFFFF_FFFF_DEAD_0000, 0x10_0000, .read_write, boot_services) catch |e| {
+        log.err("Memory error: {}", .{e});
+        return .aborted;
     };
     log.info("Memory page allocated.", .{});
 
