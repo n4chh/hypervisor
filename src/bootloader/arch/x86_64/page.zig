@@ -123,10 +123,10 @@ fn EntryBase(_table_type: TableType) type {
     };
 }
 
-const PTE = EntryBase(.PTE);
-const PDE = EntryBase(.PDE);
-const PDPTE = EntryBase(.PDPTE);
-const PML4E = EntryBase(.PML4E);
+pub const PTE = EntryBase(.PTE);
+pub const PDE = EntryBase(.PDE);
+pub const PDPTE = EntryBase(.PDPTE);
+pub const PML4E = EntryBase(.PML4E);
 
 
 pub const page_mask_4k: u64 = 0xFFF;

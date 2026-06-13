@@ -4,6 +4,7 @@ const blog = @import("log.zig");
 const build_options = @import("build_options");
 const log = std.log.scoped(.bootloader);
 const Reader = std.Io.Reader;
+const FileReader = std.Io.File.Reader;
 const arch = @import("arch.zig");
 const page_size = arch.impl.page_size_4k;
 const page_mask = arch.impl.page_mask_4k;
@@ -13,41 +14,84 @@ const page_mask = arch.impl.page_mask_4k;
 // Ref: https://github.com/ziglang/zig/blob/master/lib/std/std.zig#L111
 pub const std_options = blog.default_log_options;
 
-fn parseKernel(kernel: **uefi.protocol.File, boot_services: *uefi.tables.BootServices) uefi.Status {
+fn loadKernel(kernel: *uefi.protocol.File, header: *const std.elf.Header, boot_services: *uefi.tables.BootServices) uefi.Error!void {
+
+    // const kernel_buffer: []align(8) u8 = boot_services.allocatePool(.loader_data, kernel) catch |err| {
+    //     log.err("Couldn't allocate memory to read the kernel header: {}", .{err});
+    //     return uefi.Error.Aborted;
+    // };
+    log.debug("{}, {}", .{header, boot_services});
+    var kernel_info_buffer: [1000]u8 = undefined;
+    const  kernel_info: *uefi.protocol.File.Info.File = try kernel.getInfo(.file, @alignCast(&kernel_info_buffer));
+    log.debug("kernel info {}", .{kernel_info});
+
+    const kernel_buffer = boot_services.allocatePool(.loader_data, kernel_info.file_size) catch |err| {
+        log.err("Couldn't allocate memory to read the kernel header: {}", .{err});
+        return uefi.Error.Aborted;
+    };
+    log.debug("Bytes readed: {d}", .{try kernel.read(kernel_buffer)}); 
+
+    var iter = std.elf.Header.iterateProgramHeadersBuffer(header, kernel_buffer);
+
+    const Addr = std.elf.Elf64.Addr;
+    var kernel_start_virt: Addr = std.math.maxInt(Addr);
+    var kernel_start_phys: Addr = std.math.maxInt(Addr);
+    var kernel_end_phys: Addr = 0;
+    while (true) {
+        const h = iter.next() catch |e| {
+            log.err("Error iterating kernel headers {}", .{e});
+            return uefi.Error.LoadError;
+        } orelse break;
+        if (h.p_type != std.elf.PT_LOAD) continue;
+        if (h.p_vaddr < kernel_start_virt) kernel_start_virt = h.p_vaddr;
+        if (h.p_paddr < kernel_start_phys) kernel_start_phys = h.p_paddr;
+        if (h.p_paddr + h.p_memsz > kernel_end_phys) kernel_end_phys = h.p_paddr + h.p_memsz;
+    }
+
+    const pages_4kib = (kernel_end_phys - kernel_start_phys + (page_size - 1)) / page_size;
+    log.debug("Kernel image: 0x{X:0>16} - 0x{X:0>16} (0x{X} pages).", .{ kernel_start_phys, kernel_end_phys, pages_4kib });
+
+    const pages = boot_services.allocatePages(.{.address = @ptrFromInt(kernel_start_phys)}, .loader_data, pages_4kib) catch |e| {
+        log.err("Error allocating memory for kernel {}", .{e});
+        return uefi.Error.LoadError;
+    };
+    log.debug("Pages allocated {any}", .{pages});
+
+    for (0..pages_4kib) |i| {
+        arch.impl.map4kTo(kernel_start_virt + page_size * i, 
+                kernel_start_phys + page_size * i,
+                .read_write, boot_services) catch |e| {
+            log.err("Error allocating memory for kernel {}", .{e});
+            return uefi.Error.LoadError;
+        };
+    }
+    log.debug("Mapped memory for kernel image.", .{});
+}
+
+fn parseKernel(kernel: *uefi.protocol.File, boot_services: *uefi.tables.BootServices) uefi.Error!std.elf.Header {
     const header_size: usize = @sizeOf(std.elf.Elf64.Ehdr);
     const header_buffer: []align(8) u8 = boot_services.allocatePool(.loader_data, header_size) catch |err| {
         log.err("Couldn't allocate memory to read the kernel header: {}", .{err});
-        return .aborted;
+        return uefi.Error.Aborted;
     };
 
     const read_bytes = kernel.*.read(header_buffer) catch |err| {
         log.err("Error reading the kernel {}", .{err});
-        return .aborted;
+        return uefi.Error.Aborted;
     };
     log.info("Kernel loaded on memory", .{});
     log.debug("Readed bytes from kernel file: {d}", .{read_bytes});
     // Is safe to constCast here because there is no modification
     // of the reader pointer inside the read function.
-    const header = std.elf.Header.read(@constCast(&std.Io.Reader.fixed(header_buffer))) catch |err| {
+    const header = std.elf.Header.read(@constCast(&Reader.fixed(header_buffer))) catch |err| {
         log.err("Error parsing headers of kernel binary: {}", .{err});
-        return .aborted;
+        return uefi.Error.Aborted;
     };
-    log.info(
-        \\Kernel headers:
-        \\    Entry Point: 0x{X}
-        \\    ABI: {}
-        \\    header.endian: {}
-    , .{
-        header.entry,
-        header.os_abi,
-        header.endian,
-    });
-    log.debug("Kernel headers parsed: {}", .{header});
-    return .success;
+    return header;
 }
 
-fn loadKernel(kernel: **uefi.protocol.File, boot_services: *uefi.tables.BootServices) uefi.Status {
-    // Load kernel file into the UEFI application.
+fn readKernel(boot_services: *uefi.tables.BootServices) uefi.Error!*uefi.protocol.File {
+    // Read kernel file into the UEFI application.
     // Remember that all operations with periferials must be done using uefi services
 
     // Brief zig explanation of the order of catching and unwrapping:
@@ -70,17 +114,17 @@ fn loadKernel(kernel: **uefi.protocol.File, boot_services: *uefi.tables.BootServ
     const fs: *uefi.protocol.SimpleFileSystem =
         boot_services.locateProtocol(uefi.protocol.SimpleFileSystem, null) catch |err| {
             log.err("Couldn't locate the filesystem protocol {}", .{err});
-            return .aborted;
+            return uefi.Error.Aborted;
         } orelse {
             log.err("Filesystem protocol returned null.", .{});
-            return .aborted;
+            return uefi.Error.Aborted;
         };
     log.info("Retrieved file system handler: {*}", .{fs});
     log.debug("File system: {}", .{fs});
 
     const root_dir = fs.openVolume() catch |err| {
         log.err("Couldn't open root directory of volume: {}", .{err});
-        return .aborted;
+        return uefi.Error.Aborted;
     };
     log.info("Root directory of volume opened: {*}", .{root_dir});
     log.debug("Volume: {}", .{root_dir});
@@ -91,71 +135,57 @@ fn loadKernel(kernel: **uefi.protocol.File, boot_services: *uefi.tables.BootServ
     const allocator = fba.allocator();
     const kernel_name = std.unicode.utf8ToUtf16LeAllocZ(allocator, build_options.kernel_main) catch |err| {
         log.info("Couldn't generate kernel name: {}", .{err});
-        return .aborted;
+        return uefi.Error.Aborted;
     };
 
-    kernel.* = root_dir.open(kernel_name, uefi.protocol.File.OpenMode.read, .{}) catch |err| {
+    const kernel = root_dir.open(kernel_name, uefi.protocol.File.OpenMode.read, .{}) catch |err| {
         log.err("Couldn't open kernel file: {}", .{err});
-        return .aborted;
+        return uefi.Error.Aborted;
     };
-
-    const Addr = std.elf.Elf64.Addr;
-    var kernel_start_virt: Addr = std.math.maxInt(Addr);
-    var kernel_start_phys: Addr = std.math.maxInt(Addr);
-    var kernel_end_phys: Addr = 0;
-    var iter = std.elf.Header.iterateProgramHeaders(kernel.*);
-    while (true) {
-        const header = iter.next() catch |e| {
-            log.err("Error iterating kernel headers {}.", .{e});
-            return .load_error;
-        } orelse break;
-        if (header.p_type != std.elf.PT_LOAD) continue;
-        if (header.p_vaddr < kernel_start_virt) kernel_start_virt = header.p_vaddr;
-        if (header.p_paddr < kernel_start_phys) kernel_start_phys = header.p_paddr;
-        if (header.p_paddr + header.p_memsz > kernel_end_phys) kernel_end_phys = header.p_paddr + header.p_memsz;
-    }
-
-    const pages_4kib = (kernel_end_phys - kernel_start_phys + (page_size - 1)) / page_size;
-    log.debug("Kernel image: 0x{X:0>16} - 0x{X:0>16} (0x{X} pages)", .{ kernel_start_phys, kernel_end_phys, pages_4kib });
-
-    return .success;
+    return kernel;
 }
 
-pub fn main() uefi.Status {
+pub fn main() uefi.Error!void {
     log.info("Hello from UEFI!!", .{});
-    var kernel: *uefi.protocol.File = undefined;
     const boot_services: *uefi.tables.BootServices = uefi.system_table.boot_services orelse {
         log.err("Failed to get boot services.", .{});
-        return .aborted;
+        return uefi.Error.Aborted;
     };
     log.info("Located boot_services at {*}", .{boot_services});
     log.debug("Boot Services: {}", .{boot_services});
 
-    if (loadKernel(&kernel, boot_services) != .success) {
-        return .aborted;
-    }
+    const kernel: *uefi.protocol.File = try readKernel(boot_services);
 
     log.info("Kernel loaded", .{});
     log.debug("Kernel: {}", .{kernel});
-    if (parseKernel(&kernel, boot_services) != .success) {
-        return .aborted;
-    }
+    const header: std.elf.Header = try parseKernel(kernel, boot_services);
+    log.info(
+        \\Kernel headers:
+        \\    Entry Point: 0x{X}
+        \\    ABI: {}
+        \\    header.endian: {}
+    , .{
+        header.entry,
+        header.os_abi,
+        header.endian,
+    });
+    log.debug("Kernel headers parsed: {}", .{header});
     // I think I've found UEFI docs that warns you about page privileges:
     // https://uefi.org/specs/UEFI/2.10/02_Overview.html#x64-platforms
     log.debug("Setting CR3 to a writable page.", .{});
     arch.impl.setPML4TableWritable(boot_services) catch |e| {
         log.err("Memory error: {}", .{e});
-        return .aborted;
+        return uefi.Error.Aborted;
     };
     log.debug("Alocatting memory", .{});
     arch.impl.map4kTo(0xFFFF_FFFF_DEAD_0000, 0x10_0000, .read_write, boot_services) catch |e| {
         log.err("Memory error: {}", .{e});
-        return .aborted;
+        return uefi.Error.Aborted;
     };
     log.info("Memory page allocated.", .{});
 
+    try loadKernel(kernel, &header, boot_services);
+
     while (true)
         asm volatile ("hlt");
-
-    return .success;
 }
