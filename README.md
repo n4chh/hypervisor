@@ -80,6 +80,29 @@ QEMU exited from an errro: qemu-x86_64-softmmu: -device ide-hd,bus=ide.0,drive=d
 ```
 
 #### 4. Run the application
+
+
+### Debugging
+[Debugging UEFI app in GDB](https://www.reddit.com/r/osdev/comments/144gojm/help_debugging_uefi_application_with_gdb_in_vs)
+[Ziggit thread talking about why is not possible to debug .pdb inside GDB](https://ziggit.dev/t/how-to-change-the-debug-symbol-format-for-zig-build-on-windows/4836)
+[Gdb and debug symbol in pdb](https://sourceware.org/legacy-ml/cygwin/2006-06/msg00164.html<Find>)
+
+
+#### Load EFI file inside lldb
+
+##### Attach to the qemu's gdb server 
+```lldb
+gdb-remote 1234
+```
+##### Create a module
+```lldb
+target modules create zig-out/bin/BOOTX64.EFI.efi
+```
+##### Add the symbols to the module
+```lldb
+target modules add -s zig-out/bin/BOOTX64.EFI.pdb
+```
+
 **TODO**: add debuging instructions
 
 The VM is now configured to execute our EFI application.
