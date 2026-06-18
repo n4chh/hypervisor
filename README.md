@@ -40,7 +40,53 @@ To overcome this there are 2 alternatives:
 ### UTM
 
 To use UTM to start our application, follow the next steps
-#### 1. Create a Virtual Machine
+#### 1. Download UTM
+```
+brew install --cask utm
+```
+#### 2. Ensure UTM's Qemu path in build.zig is correct
+
+Ensure that OVMF is available in your UTM installation.
+If you don't know where it is located, you can find it by creating a machine in UTM (see instructions below). Inside the VM settings (right click on your machine and select `Edit`), you can click to qemu arguments tab, then click on export command. 
+
+#### 3. Run the application
+Use zig to build and run the application:
+```
+zig build run
+```
+
+### Debugging
+[OSDEV Wiki: Debugging UEFI applications with GDB](https://wiki.osdev.org/Debugging_UEFI_applications_with_GDB)
+> Debugging UEFI binaries can be challenging because you typically don't know the address where your image will be loaded at runtime, complicating both getting an initial breakpoint and symbol loading. One workaround is have your application write its loaded base address to a known memory location, together with a marker value, so GDB can watch for it and reload symbols at the correct address.
+
+[Debugging UEFI app in GDB](https://www.reddit.com/r/osdev/comments/144gojm/help_debugging_uefi_application_with_gdb_in_vs)
+[Ziggit thread talking about why is not possible to debug .pdb inside GDB](https://ziggit.dev/t/how-to-change-the-debug-symbol-format-for-zig-build-on-windows/4836)
+[Gdb and debug symbol in pdb](https://sourceware.org/legacy-ml/cygwin/2006-06/msg00164.html<Find>)
+[Official docs of gdb](https://qemu-project.gitlab.io/qemu/system/gdb.html) 
+
+
+
+#### Load EFI file inside lldb
+
+##### Attach to the qemu's gdb server 
+```lldb
+gdb-remote 1234
+```
+##### Create a module
+```lldb
+target modules create zig-out/bin/BOOTX64.EFI.efi --symfiles zig-out/bin/BOOTX64.EFI.pdb
+```
+##### Add the symbols to the module
+```lldb
+target modules add -s zig-out/bin/BOOTX64.EFI.pdb
+```
+
+**TODO**: add debuging instructions
+
+The VM is now configured to execute our EFI application.
+
+### Create a Virtual Machine on UTM
+#### 1. Create a Virtual Machine on UTM
 If you are on ARM device, select Emulate (as this project creates an x86_64 EFI executable).
 
 In operating system select `other`, then continue with the default options.
@@ -78,38 +124,3 @@ Remove it.
 ```
 QEMU exited from an errro: qemu-x86_64-softmmu: -device ide-hd,bus=ide.0,drive=drive<ID>,bootindex=0: Cant' create IDE unit 1, bus supports only 1 units
 ```
-
-#### 4. Run the application
-
-
-### Debugging
-[OSDEV Wiki: Debugging UEFI applications with GDB](https://wiki.osdev.org/Debugging_UEFI_applications_with_GDB)
-> Debugging UEFI binaries can be challenging because you typically don't know the address where your image will be loaded at runtime, complicating both getting an initial breakpoint and symbol loading. One workaround is have your application write its loaded base address to a known memory location, together with a marker value, so GDB can watch for it and reload symbols at the correct address.
-
-[Debugging UEFI app in GDB](https://www.reddit.com/r/osdev/comments/144gojm/help_debugging_uefi_application_with_gdb_in_vs)
-[Ziggit thread talking about why is not possible to debug .pdb inside GDB](https://ziggit.dev/t/how-to-change-the-debug-symbol-format-for-zig-build-on-windows/4836)
-[Gdb and debug symbol in pdb](https://sourceware.org/legacy-ml/cygwin/2006-06/msg00164.html<Find>)
-[Official docs of gdb](https://qemu-project.gitlab.io/qemu/system/gdb.html) 
-
-
-
-#### Load EFI file inside lldb
-
-##### Attach to the qemu's gdb server 
-```lldb
-gdb-remote 1234
-```
-##### Create a module
-```lldb
-target modules create zig-out/bin/BOOTX64.EFI.efi --symfiles zig-out/bin/BOOTX64.EFI.pdb
-```
-##### Add the symbols to the module
-```lldb
-target modules add -s zig-out/bin/BOOTX64.EFI.pdb
-```
-
-**TODO**: add debuging instructions
-
-The VM is now configured to execute our EFI application.
-
-
