@@ -146,17 +146,14 @@ fn readKernel(boot_services: *uefi.tables.BootServices) uefi.Error!*uefi.protoco
 // Store Base image of our application in a known address to debug it with gdb
 pub fn storeSymbols(boot_services: *uefi.tables.BootServices) uefi.Error!void {
     const loadedImage: *uefi.protocol.LoadedImage =
-        boot_services.locateProtocol(uefi.protocol.LoadedImage, null) catch |err| {
-            log.err("Couldn't locate the LoadedImage protocol {}", .{err});
+        boot_services.locateProtocol(uefi.protocol.LoadedImage, null) catch |e| {
+            log.err("Couldn't locate the LoadedImage protocol {}", .{e});
             return uefi.Error.Aborted;
         } orelse {
             log.err("LoadedImage protocol returned null.", .{});
             return uefi.Error.Aborted;
         };
-    const imageTable = boot_services.handleProtocol(uefi.protocol.LoadedImage, loadedImage) catch |e| {
-        log.err("Error while saving image location: {}", .{e});
-    } orelse return uefi.Error.Aborted;
-    log.debug("Located UEFI Application base address at {}", .{imageTable.image_base});
+    log.info("Located UEFI Application base address at {*}", .{loadedImage.image_base});
 }
 
 pub fn main() uefi.Error!void {

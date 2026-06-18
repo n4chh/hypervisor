@@ -27,10 +27,6 @@ pub fn buildUefi(b: *std.Build) *std.Build.Step.Compile {
     return bootloader;
 }
 
-
-
-
-
 pub fn buildKernel(b: *std.Build) *std.Build.Step.Compile {
     // Create the kernel executable
     const kernel = b.addExecutable(.{
@@ -46,7 +42,7 @@ pub fn buildKernel(b: *std.Build) *std.Build.Step.Compile {
         }),
         .linkage = .static,
     });
-    kernel.entry = .{.symbol_name = "kernelEntry"};
+    kernel.entry = .{ .symbol_name = "kernelEntry" };
     kernel.linker_script = b.path("src/kernel/linker.ld");
     b.installArtifact(kernel);
     // Place the kernel inside EFI
@@ -70,9 +66,8 @@ pub fn build(b: *std.Build) void {
     const bootloader = buildUefi(b);
     const kernel = buildKernel(b);
 
-    build_options.addOption([] const u8, "kernel_main", kernel.name);
+    build_options.addOption([]const u8, "kernel_main", kernel.name);
     bootloader.root_module.addOptions("build_options", build_options);
-    
 
     const qemu_args = [_][]const u8{
         "qemu-system-x86_64",
@@ -91,16 +86,42 @@ pub fn build(b: *std.Build) void {
         "host",
         "-s",
     };
+    const macos_qemu_args = [_][]const u8{
+        "qemu-system-x86_64",
+        "-m",
+        "512M",
+        "-L",
+        "/Users/nachh/Library/Containers/com.utmapp.UTM/Data/Library/Caches/qemu",
+        "-bios",
+        ovmf_path,
+        "-drive",
+        b.fmt("file=fat:rw:{s}/{s},format=raw", .{ b.install_path, IMG_DIR_NAME }),
+        "-nographic",
+        "-serial",
+        "mon:stdio",
+        "-no-reboot",
+        "-s",
+        "-drive",
+        "if=pflash,format=raw,unit=0,file.filename=/Users/nachh/Library/Containers/com.utmapp.UTM/Data/Library/Caches/qemu/edk2-x86_64-code.fd,file.locking=off,readonly=on",
+    };
 
-    const qemu_cmd = b.addSystemCommand(&qemu_args);
+    var qemu_cmd: *std.Build.Step.Run = undefined;
+    if (b.graph.host.result.os.tag == .macos) {
+        qemu_cmd = b.addSystemCommand(&macos_qemu_args);
+    } else {
+        qemu_cmd = b.addSystemCommand(&qemu_args);
+    }
     qemu_cmd.step.dependOn(b.getInstallStep());
 
     const run_qemu_step = b.step("run", "Run QEMU");
     run_qemu_step.dependOn(&qemu_cmd.step);
 
-
-    const debug_qemu_args = qemu_args ++ [_][]const u8{"-S"};
-    const debug_qemu_cmd = b.addSystemCommand(&debug_qemu_args);
+    var debug_qemu_cmd: *std.Build.Step.Run = undefined;
+    if (b.graph.host.result.os.tag == .macos) {
+        debug_qemu_cmd = b.addSystemCommand(&macos_qemu_args ++ [_][]const u8{"-S"});
+    } else {
+        debug_qemu_cmd = b.addSystemCommand(&qemu_args ++ [_][]const u8{"-S"});
+    }
     debug_qemu_cmd.step.dependOn(b.getInstallStep());
 
     const debug_qemu_step = b.step("debug", "Run QEMU and stop execution before boot.");
@@ -111,6 +132,8 @@ pub fn build(b: *std.Build) void {
 fn findOvmfPath(b: *std.Build) []const u8 {
     const candidates: []const []const u8 = switch (b.graph.host.result.os.tag) {
         .macos => &.{
+            // Unsure if this one can be resolved by using env variables
+            "/Users/nachh/Library/Containers/com.utmapp.UTM/Data/Library/Caches/qemu/edk2-x86_64-code.fd", // UTM
             "/opt/homebrew/share/qemu/edk2-x86_64-code.fd", // Homebrew (Apple Silicon)
             "/usr/local/share/qemu/edk2-x86_64-code.fd", // Homebrew (Intel)
         },
