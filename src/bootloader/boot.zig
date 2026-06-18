@@ -20,16 +20,16 @@ fn loadKernel(kernel: *uefi.protocol.File, header: *const std.elf.Header, boot_s
     //     log.err("Couldn't allocate memory to read the kernel header: {}", .{err});
     //     return uefi.Error.Aborted;
     // };
-    log.debug("{}, {}", .{header, boot_services});
+    log.debug("{}, {}", .{ header, boot_services });
     var kernel_info_buffer: [1000]u8 = undefined;
-    const  kernel_info: *uefi.protocol.File.Info.File = try kernel.getInfo(.file, @alignCast(&kernel_info_buffer));
+    const kernel_info: *uefi.protocol.File.Info.File = try kernel.getInfo(.file, @alignCast(&kernel_info_buffer));
     log.debug("kernel info {}", .{kernel_info});
 
     const kernel_buffer = boot_services.allocatePool(.loader_data, kernel_info.file_size) catch |err| {
         log.err("Couldn't allocate memory to read the kernel header: {}", .{err});
         return uefi.Error.Aborted;
     };
-    log.debug("Bytes readed: {d}", .{try kernel.read(kernel_buffer)}); 
+    log.debug("Bytes readed: {d}", .{try kernel.read(kernel_buffer)});
 
     var iter = std.elf.Header.iterateProgramHeadersBuffer(header, kernel_buffer);
 
@@ -51,16 +51,14 @@ fn loadKernel(kernel: *uefi.protocol.File, header: *const std.elf.Header, boot_s
     const pages_4kib = (kernel_end_phys - kernel_start_phys + (page_size - 1)) / page_size;
     log.debug("Kernel image: 0x{X:0>16} - 0x{X:0>16} (0x{X} pages).", .{ kernel_start_phys, kernel_end_phys, pages_4kib });
 
-    const pages = boot_services.allocatePages(.{.address = @ptrFromInt(kernel_start_phys)}, .loader_data, pages_4kib) catch |e| {
+    const pages = boot_services.allocatePages(.{ .address = @ptrFromInt(kernel_start_phys) }, .loader_data, pages_4kib) catch |e| {
         log.err("Error allocating memory for kernel {}", .{e});
         return uefi.Error.LoadError;
     };
     log.debug("Pages allocated {any}", .{pages});
 
     for (0..pages_4kib) |i| {
-        arch.impl.map4kTo(kernel_start_virt + page_size * i, 
-                kernel_start_phys + page_size * i,
-                .read_write, boot_services) catch |e| {
+        arch.impl.map4kTo(kernel_start_virt + page_size * i, kernel_start_phys + page_size * i, .read_write, boot_services) catch |e| {
             log.err("Error allocating memory for kernel {}", .{e});
             return uefi.Error.LoadError;
         };
@@ -145,6 +143,22 @@ fn readKernel(boot_services: *uefi.tables.BootServices) uefi.Error!*uefi.protoco
     return kernel;
 }
 
+// Store Base image of our application in a known address to debug it with gdb
+pub fn storeSymbols(boot_services: *uefi.tables.BootServices) uefi.Error!void {
+    const loadedImage: *uefi.protocol.LoadedImage =
+        boot_services.locateProtocol(uefi.protocol.LoadedImage, null) catch |err| {
+            log.err("Couldn't locate the LoadedImage protocol {}", .{err});
+            return uefi.Error.Aborted;
+        } orelse {
+            log.err("LoadedImage protocol returned null.", .{});
+            return uefi.Error.Aborted;
+        };
+    const imageTable = boot_services.handleProtocol(uefi.protocol.LoadedImage, loadedImage) catch |e| {
+        log.err("Error while saving image location: {}", .{e});
+    } orelse return uefi.Error.Aborted;
+    log.debug("Located UEFI Application base address at {}", .{imageTable.image_base});
+}
+
 pub fn main() uefi.Error!void {
     log.info("Hello from UEFI!!", .{});
     const boot_services: *uefi.tables.BootServices = uefi.system_table.boot_services orelse {
@@ -153,6 +167,8 @@ pub fn main() uefi.Error!void {
     };
     log.info("Located boot_services at {*}", .{boot_services});
     log.debug("Boot Services: {}", .{boot_services});
+
+    try storeSymbols(boot_services);
 
     const kernel: *uefi.protocol.File = try readKernel(boot_services);
 

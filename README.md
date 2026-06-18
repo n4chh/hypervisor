@@ -83,9 +83,14 @@ QEMU exited from an errro: qemu-x86_64-softmmu: -device ide-hd,bus=ide.0,drive=d
 
 
 ### Debugging
+[OSDEV Wiki: Debugging UEFI applications with GDB](https://wiki.osdev.org/Debugging_UEFI_applications_with_GDB)
+> Debugging UEFI binaries can be challenging because you typically don't know the address where your image will be loaded at runtime, complicating both getting an initial breakpoint and symbol loading. One workaround is have your application write its loaded base address to a known memory location, together with a marker value, so GDB can watch for it and reload symbols at the correct address.
+
 [Debugging UEFI app in GDB](https://www.reddit.com/r/osdev/comments/144gojm/help_debugging_uefi_application_with_gdb_in_vs)
 [Ziggit thread talking about why is not possible to debug .pdb inside GDB](https://ziggit.dev/t/how-to-change-the-debug-symbol-format-for-zig-build-on-windows/4836)
 [Gdb and debug symbol in pdb](https://sourceware.org/legacy-ml/cygwin/2006-06/msg00164.html<Find>)
+[Official docs of gdb](https://qemu-project.gitlab.io/qemu/system/gdb.html) 
+
 
 
 #### Load EFI file inside lldb
@@ -96,7 +101,7 @@ gdb-remote 1234
 ```
 ##### Create a module
 ```lldb
-target modules create zig-out/bin/BOOTX64.EFI.efi
+target modules create zig-out/bin/BOOTX64.EFI.efi --symfiles zig-out/bin/BOOTX64.EFI.pdb
 ```
 ##### Add the symbols to the module
 ```lldb

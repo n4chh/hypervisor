@@ -95,8 +95,16 @@ pub fn build(b: *std.Build) void {
     const qemu_cmd = b.addSystemCommand(&qemu_args);
     qemu_cmd.step.dependOn(b.getInstallStep());
 
-    const run_qemu_cmd = b.step("run", "Run QEMU");
-    run_qemu_cmd.dependOn(&qemu_cmd.step);
+    const run_qemu_step = b.step("run", "Run QEMU");
+    run_qemu_step.dependOn(&qemu_cmd.step);
+
+
+    const debug_qemu_args = qemu_args ++ [_][]const u8{"-S"};
+    const debug_qemu_cmd = b.addSystemCommand(&debug_qemu_args);
+    debug_qemu_cmd.step.dependOn(b.getInstallStep());
+
+    const debug_qemu_step = b.step("debug", "Run QEMU and stop execution before boot.");
+    debug_qemu_step.dependOn(&debug_qemu_cmd.step);
 }
 
 // Find OVMF firmware device
