@@ -103,3 +103,7 @@ Once UEFI OS loader takes control of the system and completes the operating syst
 
 
 If any `EFI_RUNTIME_SERVICES` calls are not supported for use by the OS at runtime an `EFI_PROPERTIES_TABLE` (an entry inside `EFI_CONFIGURATION_TABLE`) must describe the supported services.
+
+
+# Resources
+https://uefi.org/sites/default/files/resources/Driver%20Development%20with%20EDKII_Final.pdf?ref=margin.re

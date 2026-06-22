@@ -153,7 +153,15 @@ pub fn storeSymbols(boot_services: *uefi.tables.BootServices) uefi.Error!void {
             log.err("LoadedImage protocol returned null.", .{});
             return uefi.Error.Aborted;
         };
-    log.info("Located UEFI Application base address at {*}", .{loadedImage.image_base});
+    log.warn("Located UEFI Application base address at {*}", .{loadedImage.image_base});
+    const image_base_ptr: *volatile u64 = @ptrFromInt(0x10008);
+    const watchpoint_ptr: *volatile u64 = @ptrFromInt(0x10000);
+    image_base_ptr.* = @intFromPtr(loadedImage.image_base);
+    // We will use this pointer to create a watchpoint over the known direction to tell lldb
+    // to stop execution when addr 0x10000 has the value 0xAAAABBBB.
+    // Once that we could look to 0x10008 to get the base address of the UEFI application
+    // and apply it so then symbols are resolved.
+    watchpoint_ptr.* = 0xAAAABBBB;
 }
 
 pub fn main() uefi.Error!void {

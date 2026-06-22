@@ -75,6 +75,8 @@ pub fn build(b: *std.Build) void {
         "512M",
         "-bios",
         ovmf_path,
+        // "-drive",
+        // "if=pflash,format=raw,unit=0,file.filename=" ++ ovmf_path ++ ",file.locking=off,readonly=on",
         "-drive",
         b.fmt("file=fat:rw:{s}/{s},format=raw", .{ b.install_path, IMG_DIR_NAME }),
         "-nographic",
@@ -92,8 +94,6 @@ pub fn build(b: *std.Build) void {
         "512M",
         "-L",
         "/Users/nachh/Library/Containers/com.utmapp.UTM/Data/Library/Caches/qemu",
-        "-bios",
-        ovmf_path,
         "-drive",
         b.fmt("file=fat:rw:{s}/{s},format=raw", .{ b.install_path, IMG_DIR_NAME }),
         "-nographic",
@@ -103,6 +103,7 @@ pub fn build(b: *std.Build) void {
         "-s",
         "-drive",
         "if=pflash,format=raw,unit=0,file.filename=/Users/nachh/Library/Containers/com.utmapp.UTM/Data/Library/Caches/qemu/edk2-x86_64-code.fd,file.locking=off,readonly=on",
+        // "if=pflash,format=raw,unit=0,file.filename=" ++ ovmf_path ++ ",file.locking=off,readonly=on",
     };
 
     var qemu_cmd: *std.Build.Step.Run = undefined;
