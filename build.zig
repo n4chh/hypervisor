@@ -86,7 +86,6 @@ pub fn build(b: *std.Build) void {
         "-enable-kvm",
         "-cpu",
         "host",
-        "-s",
     };
     const macos_qemu_args = [_][]const u8{
         "qemu-system-x86_64",
@@ -100,7 +99,6 @@ pub fn build(b: *std.Build) void {
         "-serial",
         "mon:stdio",
         "-no-reboot",
-        "-s",
         "-drive",
         "if=pflash,format=raw,unit=0,file.filename=/Users/nachh/Library/Containers/com.utmapp.UTM/Data/Library/Caches/qemu/edk2-x86_64-code.fd,file.locking=off,readonly=on",
         // "if=pflash,format=raw,unit=0,file.filename=" ++ ovmf_path ++ ",file.locking=off,readonly=on",
@@ -121,7 +119,7 @@ pub fn build(b: *std.Build) void {
     if (b.graph.host.result.os.tag == .macos) {
         debug_qemu_cmd = b.addSystemCommand(&macos_qemu_args ++ [_][]const u8{"-S"});
     } else {
-        debug_qemu_cmd = b.addSystemCommand(&qemu_args ++ [_][]const u8{"-S"});
+        debug_qemu_cmd = b.addSystemCommand(&qemu_args ++ [_][]const u8{"-S", "-s"});
     }
     debug_qemu_cmd.step.dependOn(b.getInstallStep());
 
