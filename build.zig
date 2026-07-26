@@ -16,8 +16,10 @@ pub fn buildUefi(b: *std.Build) *std.Build.Step.Compile {
             // .optimize = b.standardOptimizeOption(.{.preferred_optimize_mode = .Debug}),
         }),
         .linkage = .static,
-        .use_lld = true,
-        .use_llvm = true,
+        // At the moment we didn't fell into any issue of lldb not dettecting debug symbols
+        // However Zig version we use doesn't use llvm backend. If issues arise uncomment this lines
+        // .use_lld = true,
+        // .use_llvm = true,
     });
 
     b.installArtifact(bootloader);

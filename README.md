@@ -58,6 +58,14 @@ zig build run
 # Debugging
 ## Tools
 We will use LLDB with [LLEF](https://github.com/foundryzero/llef) to improve visuals and features of LLDB.
+### Zig backend
+[Zig doesn't use llvm backend as default](https://ziggit.dev/t/no-symbol-in-lldb-debugger/12511/5)
+If debug symbols fail to appear inside elf binaries. is wort to use llvm linker and backend:
+```zig
+// Add this to the different executable/artifacts inside build.zig
+.use_llvm = true,
+.use_lld = true,
+```
 ### Note on PDB files for UEFI
 Debugging uefi is one of the most painful tasks of the entire process. In one hand, GDB doesn't add support for PDB files at all.
 Unfortunatelly for us, [LLDB only partially read debug symbols in .pdb files](https://github.com/llvm/llvm-project/issues/78535). 
