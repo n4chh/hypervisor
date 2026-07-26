@@ -37,7 +37,10 @@ fn loadKernel(kernel: *uefi.protocol.File, header: *const std.elf.Header, boot_s
     var kernel_start_virt: Addr = std.math.maxInt(Addr);
     var kernel_start_phys: Addr = std.math.maxInt(Addr);
     var kernel_end_phys: Addr = 0;
+    var i_a: u8 = 0;
     while (true) {
+        log.debug("{d}", .{i_a});
+        i_a += 1;
         const h = iter.next() catch |e| {
             log.err("Error iterating kernel headers {}", .{e});
             return uefi.Error.LoadError;
@@ -47,6 +50,11 @@ fn loadKernel(kernel: *uefi.protocol.File, header: *const std.elf.Header, boot_s
         if (h.p_paddr < kernel_start_phys) kernel_start_phys = h.p_paddr;
         if (h.p_paddr + h.p_memsz > kernel_end_phys) kernel_end_phys = h.p_paddr + h.p_memsz;
     }
+    log.debug(\\PT_LOAD Headers analized
+        \\  Kernel Start Virtual Address:   {d}
+        \\  Kernel Start Physical Address:  {d}
+        \\  Kernel End Physical Address:    {d}
+        , .{kernel_start_virt, kernel_start_phys, kernel_end_phys});
 
     const pages_4kib = (kernel_end_phys - kernel_start_phys + (page_size - 1)) / page_size;
     log.debug("Kernel image: 0x{X:0>16} - 0x{X:0>16} (0x{X} pages).", .{ kernel_start_phys, kernel_end_phys, pages_4kib });
@@ -145,8 +153,8 @@ fn readKernel(boot_services: *uefi.tables.BootServices) uefi.Error!*uefi.protoco
 
 // Store Base image of our application in a known address to debug it with gdb
 pub fn storeSymbols(boot_services: *uefi.tables.BootServices) uefi.Error!void {
-    const loadedImage: *uefi.protocol.LoadedImage =
-        boot_services.locateProtocol(uefi.protocol.LoadedImage, null) catch |e| {
+    const loadedImage =
+        boot_services.handleProtocol(uefi.protocol.LoadedImage, uefi.handle) catch |e| {
             log.err("Couldn't locate the LoadedImage protocol {}", .{e});
             return uefi.Error.Aborted;
         } orelse {

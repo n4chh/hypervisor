@@ -11,9 +11,13 @@ pub fn buildUefi(b: *std.Build) *std.Build.Step.Compile {
                 .cpu_arch = .x86_64,
                 .os_tag = .uefi,
             }),
-            .optimize = b.standardOptimizeOption(.{}),
+            // .optimize = b.standardOptimizeOption(.{}),
+            .optimize = .Debug,
+            // .optimize = b.standardOptimizeOption(.{.preferred_optimize_mode = .Debug}),
         }),
         .linkage = .static,
+        .use_lld = true,
+        .use_llvm = true,
     });
 
     b.installArtifact(bootloader);

@@ -55,31 +55,109 @@ Use zig to build and run the application:
 zig build run
 ```
 
-### Debugging
+# Debugging
+## Tools
+We will use LLDB with [LLEF](https://github.com/foundryzero/llef) to improve visuals and features of LLDB.
+### Note on PDB files for UEFI
+Debugging uefi is one of the most painful tasks of the entire process. In one hand, GDB doesn't add support for PDB files at all.
+Unfortunatelly for us, [LLDB only partially read debug symbols in .pdb files](https://github.com/llvm/llvm-project/issues/78535). 
+
+This is the first time in the entire project I ended up asking AI for hyphothesis of what it could be the reason why I didn't have debug symbols. Specifically I notice when searching a `pub fn` using `image lookup -s <symbol_name>` it gives me a valid address, while normal ones shown an empty address:
+```
+(lldb) image lookup -n readKernel
+1 match found in /home/nachh/Desktop/Github/hypervisor/zig-out/img/efi/boot/BOOTX64.EFI:
+        Address:  ()
+        Summary:
+(lldb) image lookup -n storeSymbols
+1 match found in /home/nachh/Desktop/Github/hypervisor/zig-out/img/efi/boot/BOOTX64.EFI:
+        Address: BOOTX64.EFI[0x000000000002b6a0] (BOOTX64.EFI..text + 173728)
+        Summary: BOOTX64.EFI`storeSymbols at boot.zig:155
+```
+## Instructions
 [OSDEV Wiki: Debugging UEFI applications with GDB](https://wiki.osdev.org/Debugging_UEFI_applications_with_GDB)
 > Debugging UEFI binaries can be challenging because you typically don't know the address where your image will be loaded at runtime, complicating both getting an initial breakpoint and symbol loading. One workaround is have your application write its loaded base address to a known memory location, together with a marker value, so GDB can watch for it and reload symbols at the correct address.
 
+### LLDB Basics
+
+#### Create a module
+```lldb
+target modules create zig-out/bin/BOOTX64.EFI.efi --symfiles zig-out/bin/BOOTX64.EFI.pdb
+```
+#### Set the load address of all sections
+**Note:** `-s` flag adds the provided offset to the base address defined in the object. To see the default ImageBase address use:
+```bash
+ llvm-readobj --headers zig-out/bin/BOOTX64.EFI.efi | grep -i ImageBase -C 4
+```
+**Example**
+```
+  SizeOfInitializedData: 40960
+  SizeOfUninitializedData: 0
+  AddressOfEntryPoint: 0x1C010
+  BaseOfCode: 0x1000
+->ImageBase: 0x0        
+  SectionAlignment: 4096
+  FileAlignment: 512
+  MajorOperatingSystemVersion: 6
+  MinorOperatingSystemVersion: 0
+```
+
+```lldb
+target modules load -f BOOTX64.EFI.efi -s <offset>
+```
+#### Attach to the qemu's gdb server 
+```lldb
+gdb-remote 1234
+```
+
+
+### Usefull guides
 [Debugging UEFI app in GDB](https://www.reddit.com/r/osdev/comments/144gojm/help_debugging_uefi_application_with_gdb_in_vs)
 [Ziggit thread talking about why is not possible to debug .pdb inside GDB](https://ziggit.dev/t/how-to-change-the-debug-symbol-format-for-zig-build-on-windows/4836)
 [Gdb and debug symbol in pdb](https://sourceware.org/legacy-ml/cygwin/2006-06/msg00164.html<Find>)
 [Official docs of gdb](https://qemu-project.gitlab.io/qemu/system/gdb.html) 
 
+### Manual way to find base address
+One way to locate the base address in runtime will be:
+1. Set up a whatchpoint in a known addres:
+    ```
+    # this will automatically set it to modify type watchpoint
+    watchpoint set expression -- 0x10000
+    ```
+2. Continue application until you hit the whatcpoint.
+3. Once watchpoint is hit, locate the assembly values the binary:
+
+    **Value to search**
+    ```
+    1c1d7:	75 2b                	jne    0x1c204
+    1c1d9:	eb 35                	jmp    0x1c210
+    1c1db:	48 8b 45 e0          	mov    -0x20(%rbp),%rax
+    1c1df:	48 89 45 c0          	mov    %rax,-0x40(%rbp)
+    1c1e3:	eb ab                	jmp    0x1c190
+    1c1e5:	48 8b 4d d8          	mov    -0x28(%rbp),%rcx
+    1c1e9:	e8 f2 05 01 00       	call   0x2c7e0
+    1c1ee:	48 8b 4d d8          	mov    -0x28(%rbp),%rcx
+    ```
+
+    **Commands**
+    ```bash
+    # Use whatever feels you better to find patterns, neovim is useful to me.
+    objdump -d zig-out/bin/BOOTX64.EFI.efi | nvim
+    ```
+    **RegEx Pattern**
+    ```regex
+    jne.*\n.*jmp.*\n.*-0x20(%rbp).*%rax\n.*%rax,-0x40(%rbp)\n.*jmp.*190\n.*mov.*-0x28(%rbp),%rcx\n.*call.*7e0\n.*\n.*call.*c20
+    ```
+4. Substract relative address from actuall address to obtain base address.
+    ```lldb
+    (lldb) p/x 0x1e11d1f2 - 0x1c1f2
+    (int) 0x1e101000
+    ```
+    **Note**: Due to some reason I still don't know, UEFI LoadedImage.BaseAddres points to a completely different address which is located in the stack of the current application (weird):
+    ```
+    [warn] (bootloader): Located UEFI Application base address at u8@1fe8f000
+    ```
 
 
-#### Load EFI file inside lldb
-
-##### Attach to the qemu's gdb server 
-```lldb
-gdb-remote 1234
-```
-##### Create a module
-```lldb
-target modules create zig-out/bin/BOOTX64.EFI.efi --symfiles zig-out/bin/BOOTX64.EFI.pdb
-```
-##### Add the symbols to the module
-```lldb
-target modules add -s zig-out/bin/BOOTX64.EFI.pdb
-```
 
 **TODO**: add debuging instructions
 
