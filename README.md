@@ -58,16 +58,9 @@ zig build run
 # Debugging
 ## Tools
 We will use LLDB with [LLEF](https://github.com/foundryzero/llef) to improve visuals and features of LLDB.
-### Zig backend
-[Zig doesn't use llvm backend as default](https://ziggit.dev/t/no-symbol-in-lldb-debugger/12511/5)
-If debug symbols fail to appear inside elf binaries. is wort to use llvm linker and backend:
-```zig
-// Add this to the different executable/artifacts inside build.zig
-.use_llvm = true,
-.use_lld = true,
-```
-### Note on PDB files for UEFI
-Debugging uefi is one of the most painful tasks of the entire process. In one hand, GDB doesn't add support for PDB files at all.
+### Zig build Options
+#### Debug format
+Debugging PDB is one of the most painful tasks of the entire process. In one hand, GDB doesn't add support for PDB files at all.
 Unfortunatelly for us, [LLDB only partially read debug symbols in .pdb files](https://github.com/llvm/llvm-project/issues/78535). 
 
 This is the first time in the entire project I ended up asking AI for hyphothesis of what it could be the reason why I didn't have debug symbols. Specifically I notice when searching a `pub fn` using `image lookup -s <symbol_name>` it gives me a valid address, while normal ones shown an empty address:
@@ -80,6 +73,21 @@ This is the first time in the entire project I ended up asking AI for hyphothesi
 1 match found in /home/nachh/Desktop/Github/hypervisor/zig-out/img/efi/boot/BOOTX64.EFI:
         Address: BOOTX64.EFI[0x000000000002b6a0] (BOOTX64.EFI..text + 173728)
         Summary: BOOTX64.EFI`storeSymbols at boot.zig:155
+```
+
+**TL;DR**
+
+Solution I came up with is to force dwarf format inside zig build system:
+```zig
+    .dwarf_format = .@"64",
+```
+#### Backend
+[Zig doesn't use llvm backend as default](https://ziggit.dev/t/no-symbol-in-lldb-debugger/12511/5)
+If debug symbols fail to appear inside elf binaries. is wort to use llvm linker and backend:
+```zig
+// Add this to the different executable/artifacts inside build.zig
+.use_llvm = true,
+.use_lld = true,
 ```
 ## Instructions
 [OSDEV Wiki: Debugging UEFI applications with GDB](https://wiki.osdev.org/Debugging_UEFI_applications_with_GDB)

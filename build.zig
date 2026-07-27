@@ -14,6 +14,7 @@ pub fn buildUefi(b: *std.Build) *std.Build.Step.Compile {
             // .optimize = b.standardOptimizeOption(.{}),
             .optimize = .Debug,
             // .optimize = b.standardOptimizeOption(.{.preferred_optimize_mode = .Debug}),
+            .dwarf_format = .@"64",
         }),
         .linkage = .static,
         // At the moment we didn't fell into any issue of lldb not dettecting debug symbols
