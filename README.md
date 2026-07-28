@@ -56,6 +56,22 @@ zig build run
 ```
 
 # Debugging
+## Instructions
+Based in [OSDEV Wiki: Debugging UEFI applications with GDB](https://wiki.osdev.org/Debugging_UEFI_applications_with_GDB), we setup a known memory address with a known value in code (see `storeSymbols` in `src/bootloader/boot.zig`).
+> Debugging UEFI binaries can be challenging because you typically don't know the address where your image will be loaded at runtime, complicating both getting an initial breakpoint and symbol loading. One workaround is have your application write its loaded base address to a known memory location, together with a marker value, so GDB can watch for it and reload symbols at the correct address.
+
+We also will add symbols in `DWARF` format as mentioned in [[#Debug format]] to the EFI binary to let LLDB automatically detect all symbols.
+Then we setup a watchpoint at that memory address:
+```lldb
+watchpoint set expr -- 0x10000
+```
+Then we attach a command to the watchpoint. This will be launched anytime the watchpoint is trigger, which will be handy to reload symbols after restarting the qemu server.
+```lldb
+watchpoint command add
+target modules load -f BOOTX64.EFI -s `*(long long *)0x10008`
+DONE
+```
+
 ## Tools
 We will use LLDB with [LLEF](https://github.com/foundryzero/llef) to improve visuals and features of LLDB.
 ### Zig build Options
@@ -89,11 +105,17 @@ If debug symbols fail to appear inside elf binaries. is wort to use llvm linker 
 .use_llvm = true,
 .use_lld = true,
 ```
-## Instructions
-[OSDEV Wiki: Debugging UEFI applications with GDB](https://wiki.osdev.org/Debugging_UEFI_applications_with_GDB)
-> Debugging UEFI binaries can be challenging because you typically don't know the address where your image will be loaded at runtime, complicating both getting an initial breakpoint and symbol loading. One workaround is have your application write its loaded base address to a known memory location, together with a marker value, so GDB can watch for it and reload symbols at the correct address.
 
 ### LLDB Basics
+#### Scripts
+Before using any function defined in any script, we must import it.
+```lldb
+command script import watchpoints
+```
+Then lldb commands that accept python functions will be able to resolve them.
+```llbd
+watchpoint command add -F watchpoints.get_image_base
+```
 
 #### Create a module
 ```lldb
