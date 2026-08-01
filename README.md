@@ -57,6 +57,14 @@ zig build run
 
 # Debugging
 ## Instructions
+First, create a target before attaching to the process. Doing this before attaching to QEMU Monitor server will be faster and save us tons of struggle.
+```lldb
+target create zig-out/img/efi/boot/BOOTX64.EFI
+```
+Then attach to the server.
+```lldb
+gdb-remote 1234
+```
 Based in [OSDEV Wiki: Debugging UEFI applications with GDB](https://wiki.osdev.org/Debugging_UEFI_applications_with_GDB), we setup a known memory address with a known value in code (see `storeSymbols` in `src/bootloader/boot.zig`).
 > Debugging UEFI binaries can be challenging because you typically don't know the address where your image will be loaded at runtime, complicating both getting an initial breakpoint and symbol loading. One workaround is have your application write its loaded base address to a known memory location, together with a marker value, so GDB can watch for it and reload symbols at the correct address.
 
@@ -72,8 +80,33 @@ target modules load -f BOOTX64.EFI -s `*(long long *)0x10008`
 DONE
 ```
 
+
 ## Tools
 We will use LLDB with [LLEF](https://github.com/foundryzero/llef) to improve visuals and features of LLDB.
+#### Why don't choose GDB?
+Although GDB seem to have less random crashes during debugging sessions, GDB doesn't have native support to PE files. This means, that even if we include dwarf symbols inside the PE file, GDB won't detect them correctly:
+```
+(remote) gef➤  add-symbol-file zig-out/img/efi/boot/BOOTX64.EFI -o $base
+add symbol table from file "zig-out/img/efi/boot/BOOTX64.EFI" with all sections offset by 0x1e065000
+Reading symbols from zig-out/img/efi/boot/BOOTX64.EFI...
+[*] Not a valid file format: Not a valid ELF file (magic)
+``` 
+#### Generating code for GDB
+One easy way to create a valid ELF file, is to change temporarily the UEFI binary target to `.linux`. After having your `QEMU` monitor server running (using `zig build debug`), run `zig build`, to generate the ELF file once is running.
+```zig
+    const bootloader = b.addExecutable(.{
+        .name = "BOOTX64.EFI",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/bootloader/boot.zig"),
+            .target = b.resolveTargetQuery(.{
+                .cpu_arch = .x86_64,
+                .os_tag = .linux,
+		// ^^^ this line changed ^^^
+            }),
+// [...]
+```
+**NOTE**: Every time we run `zig build *` commands, our compiled UEFI application will be copied to the `zig-out/img/efi/boot/BOOTX64.EFI` and overwrite the existing binary that was there. Remember that UEFI uses PE format, so if you must run `zig build debug` before changing the `os_tag` to `.linux`.
+
 ### Zig build Options
 #### Debug format
 Debugging PDB is one of the most painful tasks of the entire process. In one hand, GDB doesn't add support for PDB files at all.
@@ -108,6 +141,7 @@ If debug symbols fail to appear inside elf binaries. is wort to use llvm linker 
 
 ### LLDB Basics
 #### Scripts
+All we mentioned before, could be seted up in a custom script. Unfortunately the python API for attaching functions to a specific watchpoint is not yet defined.
 Before using any function defined in any script, we must import it.
 ```lldb
 command script import watchpoints
