@@ -20,18 +20,27 @@ fn loadKernel(kernel: *uefi.protocol.File, header: *const std.elf.Header, boot_s
     //     log.err("Couldn't allocate memory to read the kernel header: {}", .{err});
     //     return uefi.Error.Aborted;
     // };
-    log.debug("{}, {}", .{ header, boot_services });
-    var kernel_info_buffer: [1000]u8 = undefined;
-    const kernel_info: *uefi.protocol.File.Info.File = try kernel.getInfo(.file, @alignCast(&kernel_info_buffer));
+    log.debug(\\ELF Header: {}
+              \\Boot Services: {}"
+              , .{ header, boot_services });
+    var buffer: [1000]u8 = undefined;
+    const kernel_info: *uefi.protocol.File.Info.File = try kernel.getInfo(.file, @alignCast(&buffer));
     log.debug("kernel info {}", .{kernel_info});
 
-    const kernel_buffer = boot_services.allocatePool(.loader_data, kernel_info.file_size) catch |err| {
+    const program_headers_buffer = boot_services.allocatePool(.loader_data, kernel_info.file_size) catch |err| {
         log.err("Couldn't allocate memory to read the kernel header: {}", .{err});
         return uefi.Error.Aborted;
     };
-    log.debug("Bytes readed: {d}", .{try kernel.read(kernel_buffer)});
+    log.debug("Bytes readed: {d}", .{try kernel.read(program_headers_buffer)});
 
-    var iter = std.elf.Header.iterateProgramHeadersBuffer(header, kernel_buffer);
+    var iter = std.elf.Header.iterateProgramHeadersBuffer(header, program_headers_buffer);
+    log.debug(\\Program Headers Iterator initialized: 
+              \\    Endian:                 {}
+              \\    Is 64:                  {}
+              \\    Program Headers number: {}
+              \\    Program Headers offset: 0x{x}
+              \\    Index:                  {}
+        , .{iter.endian, iter.is_64, iter.phnum, iter.phoff, iter.index});
 
     const Addr = std.elf.Elf64.Addr;
     var kernel_start_virt: Addr = std.math.maxInt(Addr);
@@ -45,7 +54,9 @@ fn loadKernel(kernel: *uefi.protocol.File, header: *const std.elf.Header, boot_s
             log.err("Error iterating kernel headers {}", .{e});
             return uefi.Error.LoadError;
         } orelse break;
+        log.debug("h: {any}", .{h});
         if (h.p_type != std.elf.PT_LOAD) continue;
+        log.debug("PT_LOAD Header found", .{});
         if (h.p_vaddr < kernel_start_virt) kernel_start_virt = h.p_vaddr;
         if (h.p_paddr < kernel_start_phys) kernel_start_phys = h.p_paddr;
         if (h.p_paddr + h.p_memsz > kernel_end_phys) kernel_end_phys = h.p_paddr + h.p_memsz;
@@ -217,4 +228,9 @@ pub fn main() uefi.Error!void {
 
     while (true)
         asm volatile ("hlt");
+}
+
+
+test "Test std.elf.Header read and itereate" {
+    log.info("trying: {any}", .{build_options});
 }

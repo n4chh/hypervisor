@@ -22,7 +22,6 @@ pub fn buildUefi(b: *std.Build) *std.Build.Step.Compile {
         // .use_lld = true,
         // .use_llvm = true,
     });
-
     b.installArtifact(bootloader);
 
     // Place the executable in the EFI fs
@@ -32,6 +31,26 @@ pub fn buildUefi(b: *std.Build) *std.Build.Step.Compile {
     );
     b.getInstallStep().dependOn(&install_bootloader.step);
     return bootloader;
+}
+
+pub fn setupBootloaderTests(b: *std.Build, build_options: *std.Build.Step.Options) void {
+    const bl_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/bootloader/boot.zig"),
+            .target = b.resolveTargetQuery(.{
+                .cpu_arch = .x86_64,
+                .os_tag = .uefi,
+            }),
+            // .optimize = b.standardOptimizeOption(.{}),
+            .optimize = .Debug,
+            // .optimize = b.standardOptimizeOption(.{.preferred_optimize_mode = .Debug}),
+            .dwarf_format = .@"64",
+        })
+    });
+    bl_tests.root_module.addOptions("build_options", build_options);
+    const run_bl_tests = b.addRunArtifact(bl_tests);
+    const bl_tests_step = b.step("bootloader-tests", "Run bootloader tests");
+    bl_tests_step.dependOn(&run_bl_tests.step);
 }
 
 pub fn buildKernel(b: *std.Build) *std.Build.Step.Compile {
@@ -71,10 +90,24 @@ pub fn build(b: *std.Build) void {
     build_options.addOption(std.log.Level, "log_level", log_level);
 
     const bootloader = buildUefi(b);
+    setupBootloaderTests(b, build_options);
     const kernel = buildKernel(b);
 
     build_options.addOption([]const u8, "kernel_main", kernel.name);
+    build_options.addOption([]const u8, "kernel_path", b.fmt("{s}/{s}", .{ IMG_DIR_NAME, kernel.name }));
     bootloader.root_module.addOptions("build_options", build_options);
+    const exe_tests = b.addTest(.{
+        .name = "test",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/bootloader/test.zig"),
+            .target = std.Build.resolveTargetQuery(b,.{}),
+        })
+    });
+    exe_tests.root_module.addOptions("build_options", build_options);
+
+    const run_unit_tests = b.addRunArtifact(exe_tests);
+    const test_step = b.step("test", "Run unit tests");
+    test_step.dependOn(&run_unit_tests.step);
 
     const qemu_args = [_][]const u8{
         "qemu-system-x86_64",
@@ -132,6 +165,7 @@ pub fn build(b: *std.Build) void {
 
     const debug_qemu_step = b.step("debug", "Run QEMU and stop execution before boot.");
     debug_qemu_step.dependOn(&debug_qemu_cmd.step);
+
 }
 
 // Find OVMF firmware device
