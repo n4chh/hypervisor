@@ -111,6 +111,38 @@ fn parseKernel(kernel_reader: *Reader) uefi.Error!Kernel {
     return kernel;
 }
 
+test "parse-kernel" {
+    const io = std.testing.io;
+    const kernel_file_path = "zig-out/" ++ build_options.kernel_path;
+    const kernel_stats = try std.Io.Dir.cwd().statFile(
+        io,
+        kernel_file_path,
+        .{
+            .follow_symlinks = true,
+        }
+        );
+    try std.testing.expect(kernel_stats.size > 0);
+
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const alloc = gpa.allocator();
+    const buf2 = try alloc.alloc(u8, kernel_stats.size);
+    defer alloc.free(buf2);
+    
+    var file = try std.Io.Dir.cwd().openFile(
+        io,
+        kernel_file_path,
+        .{.allow_directory = true}
+    );
+    defer file.close(io);
+    var read_buf: [4096]u8 = undefined;
+    var reader = file.reader(io, &read_buf);
+    const kernel: Kernel = try parseKernel(&reader.interface);
+    try std.testing.expect(kernel.vstart != std.math.maxInt(Addr));
+    try std.testing.expect(kernel.pstart != std.math.maxInt(Addr));
+    try std.testing.expect(kernel.pend != 0);
+}
+
 fn readKernel(boot_services: *uefi.tables.BootServices) uefi.Error!*uefi.protocol.File {
     // Read kernel file into the UEFI application.
     // Remember that all operations with periferials must be done using uefi services
