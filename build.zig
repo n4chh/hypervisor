@@ -63,6 +63,10 @@ pub fn buildKernel(b: *std.Build) *std.Build.Step.Compile {
             .code_model = .kernel,
         }),
         .linkage = .static,
+        // MUST HAVE. normal Entry file 
+        // see https://github.com/ziglang/zig/issues/24717
+        .use_lld = true,
+        .use_llvm = true,
     });
     kernel.entry = .{ .symbol_name = "kernelEntry" };
     kernel.linker_script = b.path("src/kernel/linker.ld");
