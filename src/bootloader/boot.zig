@@ -51,16 +51,17 @@ fn createKernelReader(kernel: *uefi.protocol.File, boot_services: *uefi.tables.B
 }
 
 fn loadKernel(kernel: *const Kernel, boot_services: *uefi.tables.BootServices) uefi.Error!void {
-    const pages = boot_services.allocatePages(.{ .address = @ptrFromInt(kernel.pstart) }, .loader_data, kernel.pages_4kib) catch |e| {
-        log.err("Error allocating memory pages for kernel: {}", .{e});
-        return uefi.Error.LoadError;
-    };
-    log.debug("Bytes allocated: {any}", .{pages});
+    // const pages = boot_services.allocatePages(.{ .address = @ptrFromInt(kernel.pstart) }, .loader_data, kernel.pages_4kib) catch |err| {
+    //     log.err("Error allocating memory pages for kernel: {}", .{err});
+    //     return err;
+    // };
+    // log.debug("Bytes allocated: {any}", .{pages});
+    log.debug("Pages to create: {d}", .{kernel.pages_4kib});
 
     for (0..kernel.pages_4kib) |i| {
-        arch.impl.map4kTo(kernel.vstart + page_size * i, kernel.pstart + page_size * i, .read_write, boot_services) catch |e| {
-            log.err("Error mapping memory for kernel: {}", .{e});
-            return uefi.Error.LoadError;
+        arch.impl.map4kTo(kernel.vstart + page_size * i, kernel.pstart + page_size * i, .read_write, boot_services) catch |err| {
+            log.err("Error mapping memory for kernel: {}", .{err});
+            return ;
         };
     }
     log.debug("Mapped memory for kernel image.", .{});
@@ -88,11 +89,14 @@ fn parseKernel(kernel_reader: *Reader) uefi.Error!Kernel {
     while (true) {
         log.debug("{d}", .{i_a});
         i_a += 1;
-        const h = iter.next() catch |e| {
-            log.err("Error iterating kernel headers {}", .{e});
+        const h = iter.next() catch |err| {
+            log.err("Error iterating kernel headers {}", .{err});
             return uefi.Error.LoadError;
         } orelse break;
         log.debug("h: {any}", .{h});
+        log.debug("h.p_vaddr: 0x{X:0>16}", .{h.p_vaddr});
+        log.debug("h.p_paddr: 0x{X:0>16}", .{h.p_paddr});
+        log.debug("h.p_memsz: 0x{X}", .{h.p_memsz});
         if (h.p_type != std.elf.PT_LOAD) continue;
         log.debug("PT_LOAD Header found", .{});
         if (h.p_vaddr < kernel.vstart) kernel.vstart = h.p_vaddr;
@@ -100,13 +104,13 @@ fn parseKernel(kernel_reader: *Reader) uefi.Error!Kernel {
         if (h.p_paddr + h.p_memsz > kernel.pend) kernel.pend = h.p_paddr + h.p_memsz;
     }
     log.debug(\\PT_LOAD Headers analized
-        \\  Kernel Start Virtual Address:   {d}
-        \\  Kernel Start Physical Address:  {d}
-        \\  Kernel End Physical Address:    {d}
+        \\  Kernel Start Virtual Address:   0x{X:0>16}
+        \\  Kernel Start Physical Address:  0x{X:0>16}
+        \\  Kernel End Physical Address:    0x{X:0>16}
         , .{kernel.vstart, kernel.pstart, kernel.pend});
 
     kernel.pages_4kib = (kernel.pend - kernel.pstart + (page_size - 1)) / page_size;
-    log.debug("Kernel image: 0x{X:0>16} - 0x{X:0>16} (0x{X} pages).", .{ kernel.pstart, kernel.pend, kernel.pages_4kib });
+    log.debug("Kernel image: 0x{X:0>16} - 0x{X:0>16} ({d} pages).", .{ kernel.pstart, kernel.pend, kernel.pages_4kib });
 
     return kernel;
 }
@@ -201,8 +205,8 @@ fn readKernel(boot_services: *uefi.tables.BootServices) uefi.Error!*uefi.protoco
 // Store Base image of our application in a known address to debug it with gdb
 pub fn storeSymbols(boot_services: *uefi.tables.BootServices) uefi.Error!void {
     const loadedImage =
-        boot_services.handleProtocol(uefi.protocol.LoadedImage, uefi.handle) catch |e| {
-            log.err("Couldn't locate the LoadedImage protocol {}", .{e});
+        boot_services.handleProtocol(uefi.protocol.LoadedImage, uefi.handle) catch |err| {
+            log.err("Couldn't locate the LoadedImage protocol {}", .{err});
             return uefi.Error.Aborted;
         } orelse {
             log.err("LoadedImage protocol returned null.", .{});
@@ -240,24 +244,19 @@ pub fn main() uefi.Error!void {
     // I think I've found UEFI docs that warns you about page privileges:
     // https://uefi.org/specs/UEFI/2.10/02_Overview.html#x64-platforms
     log.debug("Setting CR3 to a writable page.", .{});
-    arch.impl.setPML4TableWritable(boot_services) catch |e| {
-        log.err("Memory error: {}", .{e});
+    arch.impl.setPML4TableWritable(boot_services) catch |err| {
+        log.err("Memory error: {}", .{err});
         return uefi.Error.Aborted;
     };
     log.debug("Alocatting memory", .{});
-    arch.impl.map4kTo(0xFFFF_FFFF_DEAD_0000, 0x10_0000, .read_write, boot_services) catch |e| {
-        log.err("Memory error: {}", .{e});
-        return uefi.Error.Aborted;
-    };
-    log.info("Memory page allocated.", .{});
+    // arch.impl.map4kTo(0xFFFF_FFFF_DEAD_0000, 0x10_0000, .read_write, boot_services) catch |err| {
+    //     log.err("Memory error: {}", .{err});
+    //     return uefi.Error.Aborted;
+    // };
+    // log.info("Memory page allocated.", .{});
 
     try loadKernel(&kernel, boot_services);
 
     while (true)
         asm volatile ("hlt");
-}
-
-
-test "Test std.elf.Header read and itereate" {
-    log.info("trying: {any}", .{build_options});
 }

@@ -225,8 +225,8 @@ pub const kib = 1024;
 pub const page_size_4k = 4 * kib;
 
 pub fn setPML4TableWritable(bs: *uefi.tables.BootServices) PageError!void {
-    const ptr = bs.allocatePages(.any, .boot_services_data, 1) catch |e| {
-        std.log.err("Couldn't allocate page: {}", .{e});
+    const ptr = bs.allocatePages(.any, .boot_services_data, 1) catch |err| {
+        std.log.err("Couldn't allocate page: {}", .{err});
         return PageError.NoMemory;
     };
     const new_pml4etable_ptr: [*]PML4E = @ptrFromInt(@intFromPtr(ptr.ptr));
@@ -243,8 +243,8 @@ pub fn allocateNewTable(T: type, entry: *T, bs: *uefi.tables.BootServices) PageE
     // the UEFI manual, I couldn't find any explicit/implicit specification why we shouldn't use .loader_data
     // (which imv is the one we should use as this is a UEFI application).
     // Ref: https://uefi.org/specs/UEFI/2.10/07_Services_Boot_Services.html#memory-type-usage-after-exitbootservices
-    const ptr = bs.allocatePages(.any, .boot_services_data, 1) catch |e| {
-        std.log.err("Couldn't allocate page: {}", .{e});
+    const ptr = bs.allocatePages(.any, .loader_data, 1) catch |err| {
+        std.log.err("Couldn't allocate page: {}", .{err});
         return PageError.NoMemory;
     };
     const paddr: Phys = @intFromPtr(ptr.ptr);
