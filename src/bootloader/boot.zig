@@ -27,6 +27,61 @@ const Kernel = struct {
 
 };
 
+fn readKernel(boot_services: *uefi.tables.BootServices) uefi.Error!*uefi.protocol.File {
+    // Read kernel file into the UEFI application.
+    // Remember that all operations with periferials must be done using uefi services
+
+    // Brief zig explanation of the order of catching and unwrapping:
+    //
+    // locateProtocol(...) LocateProtocolError!?*Protocol
+    // function returns either an optional value or an error (imagine ! acts like a separator between
+    // the 2 possible values: Error|Optional). However we want a real value.
+    // First we need to handle every result that the function may return:
+    //  - Error is returned: We must handle it, for example using catch.
+    //  - An Optional is returned: We need to ensure if our optional holds a value or not (is null)
+    //    before we use it. To do this in the same line, after we "catch" an error we are able to
+    //    unwrap the optional into a value (e.g. using orelse to handle both scenarios).
+    //
+    // The order of our handling matters, before we can't unwrap an optional if we didn't ensure we don't
+    // have an error.
+    //
+    // Diagram:
+    // if error -> abort -> else if optional == null -> abort -> else -> value
+    //
+    const fs: *uefi.protocol.SimpleFileSystem =
+        boot_services.locateProtocol(uefi.protocol.SimpleFileSystem, null) catch |err| {
+            log.err("Couldn't locate the filesystem protocol: {}", .{err});
+            return uefi.Error.Aborted;
+        } orelse {
+            log.err("Filesystem protocol returned null.", .{});
+            return uefi.Error.Aborted;
+        };
+    log.info("Retrieved file system handler: {*}", .{fs});
+    log.debug("File system: {}", .{fs});
+
+    const root_dir = fs.openVolume() catch |err| {
+        log.err("Couldn't open root directory of volume: {}", .{err});
+        return uefi.Error.Aborted;
+    };
+    log.info("Root directory of volume opened: {*}", .{root_dir});
+    log.debug("Volume: {}", .{root_dir});
+
+    // we need to figure out a better way of converting from utf8 to utf16
+    var buf: [1000]u8 = undefined;
+    var fba: std.heap.FixedBufferAllocator = .init(&buf);
+    const allocator = fba.allocator();
+    const kernel_name = std.unicode.utf8ToUtf16LeAllocZ(allocator, build_options.kernel_main) catch |err| {
+        log.info("Couldn't generate kernel name: {}", .{err});
+        return uefi.Error.Aborted;
+    };
+
+    const kernel_file = root_dir.open(kernel_name, uefi.protocol.File.OpenMode.read, .{}) catch |err| {
+        log.err("Couldn't open kernel file: {}", .{err});
+        return uefi.Error.Aborted;
+    };
+    return kernel_file;
+}
+
 fn createKernelReader(kernel: *uefi.protocol.File, boot_services: *uefi.tables.BootServices) uefi.Error!std.Io.Reader {
     // This buffer is used by UEFI getInfo function to place the File Information. Our kernel_info pointer will point to it.
     // Ref: https://uefi.org/specs/UEFI/2.10/13_Protocols_Media_Access.html#id36
@@ -37,8 +92,9 @@ fn createKernelReader(kernel: *uefi.protocol.File, boot_services: *uefi.tables.B
         return err;
     };
     log.info(
-        \\ kernel_info: {*}
-        \\ buff:        {*}
+        \\Kernel file opened and memory allocated:
+        \\  kernel_info: {*}
+        \\  buff:        {*}
         , .{kernel_info, &buf});
     const bytes_readed = kernel.read(kernel_buffer) catch |err| {
         log.err("Error reading kernel file: {}", .{err});
@@ -51,11 +107,6 @@ fn createKernelReader(kernel: *uefi.protocol.File, boot_services: *uefi.tables.B
 }
 
 fn loadKernel(kernel: *const Kernel, boot_services: *uefi.tables.BootServices) uefi.Error!void {
-    // const pages = boot_services.allocatePages(.{ .address = @ptrFromInt(kernel.pstart) }, .loader_data, kernel.pages_4kib) catch |err| {
-    //     log.err("Error allocating memory pages for kernel: {}", .{err});
-    //     return err;
-    // };
-    // log.debug("Bytes allocated: {any}", .{pages});
     log.debug("Pages to create: {d}", .{kernel.pages_4kib});
 
     for (0..kernel.pages_4kib) |i| {
@@ -90,7 +141,7 @@ fn parseKernel(kernel_reader: *Reader) uefi.Error!Kernel {
         log.debug("{d}", .{i_a});
         i_a += 1;
         const h = iter.next() catch |err| {
-            log.err("Error iterating kernel headers {}", .{err});
+            log.err("Error iterating kernel headers: {}", .{err});
             return uefi.Error.LoadError;
         } orelse break;
         log.debug("h: {any}", .{h});
@@ -98,7 +149,7 @@ fn parseKernel(kernel_reader: *Reader) uefi.Error!Kernel {
         log.debug("h.p_paddr: 0x{X:0>16}", .{h.p_paddr});
         log.debug("h.p_memsz: 0x{X}", .{h.p_memsz});
         if (h.p_type != std.elf.PT_LOAD) continue;
-        log.debug("PT_LOAD Header found", .{});
+        log.debug("PT_LOAD Header found.", .{});
         if (h.p_vaddr < kernel.vstart) kernel.vstart = h.p_vaddr;
         if (h.p_paddr < kernel.pstart) kernel.pstart = h.p_paddr;
         if (h.p_paddr + h.p_memsz > kernel.pend) kernel.pend = h.p_paddr + h.p_memsz;
@@ -147,66 +198,11 @@ test "parse-kernel" {
     try std.testing.expect(kernel.pend != 0);
 }
 
-fn readKernel(boot_services: *uefi.tables.BootServices) uefi.Error!*uefi.protocol.File {
-    // Read kernel file into the UEFI application.
-    // Remember that all operations with periferials must be done using uefi services
-
-    // Brief zig explanation of the order of catching and unwrapping:
-    //
-    // locateProtocol(...) LocateProtocolError!?*Protocol
-    // function returns either an optional value or an error (imagine ! acts like a separator between
-    // the 2 possible values: Error|Optional). However we want a real value.
-    // First we need to handle every result that the function may return:
-    //  - Error is returned: We must handle it, for example using catch.
-    //  - An Optional is returned: We need to ensure if our optional holds a value or not (is null)
-    //    before we use it. To do this in the same line, after we "catch" an error we are able to
-    //    unwrap the optional into a value (e.g. using orelse to handle both scenarios).
-    //
-    // The order of our handling matters, before we can't unwrap an optional if we didn't ensure we don't
-    // have an error.
-    //
-    // Diagram:
-    // if error -> abort -> else if optional == null -> abort -> else -> value
-    //
-    const fs: *uefi.protocol.SimpleFileSystem =
-        boot_services.locateProtocol(uefi.protocol.SimpleFileSystem, null) catch |err| {
-            log.err("Couldn't locate the filesystem protocol {}", .{err});
-            return uefi.Error.Aborted;
-        } orelse {
-            log.err("Filesystem protocol returned null.", .{});
-            return uefi.Error.Aborted;
-        };
-    log.info("Retrieved file system handler: {*}", .{fs});
-    log.debug("File system: {}", .{fs});
-
-    const root_dir = fs.openVolume() catch |err| {
-        log.err("Couldn't open root directory of volume: {}", .{err});
-        return uefi.Error.Aborted;
-    };
-    log.info("Root directory of volume opened: {*}", .{root_dir});
-    log.debug("Volume: {}", .{root_dir});
-
-    // we need to figure out a better way of converting from utf8 to utf16
-    var buf: [1000]u8 = undefined;
-    var fba: std.heap.FixedBufferAllocator = .init(&buf);
-    const allocator = fba.allocator();
-    const kernel_name = std.unicode.utf8ToUtf16LeAllocZ(allocator, build_options.kernel_main) catch |err| {
-        log.info("Couldn't generate kernel name: {}", .{err});
-        return uefi.Error.Aborted;
-    };
-
-    const kernel_file = root_dir.open(kernel_name, uefi.protocol.File.OpenMode.read, .{}) catch |err| {
-        log.err("Couldn't open kernel file: {}", .{err});
-        return uefi.Error.Aborted;
-    };
-    return kernel_file;
-}
-
 // Store Base image of our application in a known address to debug it with gdb
 pub fn storeSymbols(boot_services: *uefi.tables.BootServices) uefi.Error!void {
     const loadedImage =
         boot_services.handleProtocol(uefi.protocol.LoadedImage, uefi.handle) catch |err| {
-            log.err("Couldn't locate the LoadedImage protocol {}", .{err});
+            log.err("Couldn't locate the LoadedImage protocol: {}", .{err});
             return uefi.Error.Aborted;
         } orelse {
             log.err("LoadedImage protocol returned null.", .{});
@@ -239,7 +235,12 @@ pub fn main() uefi.Error!void {
         log.err("Error creating the kernel Reader: {}", .{err});
         return err;
     };
-    log.info("Kernel file loaded", .{});
+    log.info("Kernel file readed into memory.", .{});
+    log.debug("Closing kernel_file.", .{});
+    kernel_file.close() catch |err| {
+        log.err("Couldn't close file: {}", .{err});
+        return err;
+    };
     const kernel: Kernel = try parseKernel(@constCast(&kernel_reader)); 
     // I think I've found UEFI docs that warns you about page privileges:
     // https://uefi.org/specs/UEFI/2.10/02_Overview.html#x64-platforms
@@ -248,12 +249,7 @@ pub fn main() uefi.Error!void {
         log.err("Memory error: {}", .{err});
         return uefi.Error.Aborted;
     };
-    log.debug("Alocatting memory", .{});
-    // arch.impl.map4kTo(0xFFFF_FFFF_DEAD_0000, 0x10_0000, .read_write, boot_services) catch |err| {
-    //     log.err("Memory error: {}", .{err});
-    //     return uefi.Error.Aborted;
-    // };
-    // log.info("Memory page allocated.", .{});
+    log.debug("Alocatting memory.", .{});
 
     try loadKernel(&kernel, boot_services);
 
