@@ -21,15 +21,16 @@ const Kernel = struct {
     vstart: Addr,
     vend: Addr,
     pages_4kib: u64,
-    program: []u8,
+    program: *Reader,
     // TODO: Should we include a header field?? Is it used otherplace after parsing?
     // headers: std.elf.Header,
 
 };
 
-fn readKernel(boot_services: *uefi.tables.BootServices) uefi.Error!*uefi.protocol.File {
-    // Read kernel file into the UEFI application.
+fn loadKernel(boot_services: *uefi.tables.BootServices) uefi.Error!Kernel {
+    // Load kernel file into the UEFI application.
     // Remember that all operations with periferials must be done using uefi services
+    // Those operations must also be closed after completion.
 
     // Brief zig explanation of the order of catching and unwrapping:
     //
@@ -79,7 +80,32 @@ fn readKernel(boot_services: *uefi.tables.BootServices) uefi.Error!*uefi.protoco
         log.err("Couldn't open kernel file: {}", .{err});
         return uefi.Error.Aborted;
     };
-    return kernel_file;
+    
+    const kernel_reader: Reader = createKernelReader(kernel_file, boot_services) catch |err| {
+        log.err("Error creating the kernel Reader: {}", .{err});
+        return err;
+    };
+    log.info("Kernel file readed into memory.", .{});
+    log.debug("Closing kernel_file.", .{});
+    kernel_file.close() catch |err| {
+        log.err("Couldn't close file: {}", .{err});
+        return err;
+    };
+    root_dir.close() catch |err| {
+        log.err("Couldn't close filesystem volume: {}", .{err});
+        return err;
+    };
+    const kernel: Kernel = try parseKernel(@constCast(&kernel_reader)); 
+    // I think I've found UEFI docs that warns you about page privileges:
+    // https://uefi.org/specs/UEFI/2.10/02_Overview.html#x64-platforms
+    log.debug("Setting CR3 to a writable page.", .{});
+    arch.impl.setPML4TableWritable(boot_services) catch |err| {
+        log.err("Memory error: {}", .{err});
+        return uefi.Error.Aborted;
+    };
+    try mapKernelMemory(&kernel, boot_services);
+
+    return kernel;
 }
 
 fn createKernelReader(kernel: *uefi.protocol.File, boot_services: *uefi.tables.BootServices) uefi.Error!std.Io.Reader {
@@ -106,7 +132,7 @@ fn createKernelReader(kernel: *uefi.protocol.File, boot_services: *uefi.tables.B
     return reader;
 }
 
-fn loadKernel(kernel: *const Kernel, boot_services: *uefi.tables.BootServices) uefi.Error!void {
+fn mapKernelMemory(kernel: *const Kernel, boot_services: *uefi.tables.BootServices) uefi.Error!void {
     log.debug("Pages to create: {d}", .{kernel.pages_4kib});
 
     for (0..kernel.pages_4kib) |i| {
@@ -137,13 +163,12 @@ fn parseKernel(kernel_reader: *Reader) uefi.Error!Kernel {
     kernel.pstart = std.math.maxInt(Addr);
     kernel.pend= 0;
     var i_a: u8 = 0;
-    while (true) {
+    while (iter.next() catch |err| {
+        log.err("Error iterating kernel headers: {}", .{err});
+        return uefi.Error.LoadError;
+    }) |h| {
         log.debug("{d}", .{i_a});
         i_a += 1;
-        const h = iter.next() catch |err| {
-            log.err("Error iterating kernel headers: {}", .{err});
-            return uefi.Error.LoadError;
-        } orelse break;
         log.debug("h: {any}", .{h});
         log.debug("h.p_vaddr: 0x{X:0>16}", .{h.p_vaddr});
         log.debug("h.p_paddr: 0x{X:0>16}", .{h.p_paddr});
@@ -162,7 +187,7 @@ fn parseKernel(kernel_reader: *Reader) uefi.Error!Kernel {
 
     kernel.pages_4kib = (kernel.pend - kernel.pstart + (page_size - 1)) / page_size;
     log.debug("Kernel image: 0x{X:0>16} - 0x{X:0>16} ({d} pages).", .{ kernel.pstart, kernel.pend, kernel.pages_4kib });
-
+    kernel.program = kernel_reader;
     return kernel;
 }
 
@@ -229,30 +254,29 @@ pub fn main() uefi.Error!void {
     log.debug("Boot Services: {}", .{boot_services});
 
     try storeSymbols(boot_services);
-
-    const kernel_file: *uefi.protocol.File = try readKernel(boot_services);
-    const kernel_reader: Reader = createKernelReader(kernel_file, boot_services) catch |err| {
-        log.err("Error creating the kernel Reader: {}", .{err});
+    const kernel: Kernel = try loadKernel(boot_services);
+    log.info(
+        \\Kernel loaded into memory:
+        \\  Physical Addr Start:    0x{X:0>16}
+        \\  Physical Addr End:      0x{X:0>16}
+        \\  Virtual Addr Start:     0x{X:0>16}
+        \\  Pages mapped:           {d}
+        \\  Program size:           {d}kb
+        , .{
+            kernel.vstart,
+            kernel.pstart,
+            kernel.pend,
+            kernel.pages_4kib,
+            kernel.program.bufferedLen() / 1000,
+        });
+    var buf: [page_size * 4]u8 = undefined;
+    const memmap = boot_services.getMemoryMap(@alignCast(@ptrCast(&buf))) catch |err| {
+        log.err("Error retrieving UEFI memory map: {}", .{err});
         return err;
     };
-    log.info("Kernel file readed into memory.", .{});
-    log.debug("Closing kernel_file.", .{});
-    kernel_file.close() catch |err| {
-        log.err("Couldn't close file: {}", .{err});
-        return err;
-    };
-    const kernel: Kernel = try parseKernel(@constCast(&kernel_reader)); 
-    // I think I've found UEFI docs that warns you about page privileges:
-    // https://uefi.org/specs/UEFI/2.10/02_Overview.html#x64-platforms
-    log.debug("Setting CR3 to a writable page.", .{});
-    arch.impl.setPML4TableWritable(boot_services) catch |err| {
-        log.err("Memory error: {}", .{err});
-        return uefi.Error.Aborted;
-    };
-    log.debug("Alocatting memory.", .{});
-
-    try loadKernel(&kernel, boot_services);
-
+    log.info("Key for last memory map retrieved: {}", .{memmap.info.key});
+    try boot_services.exitBootServices(uefi.handle, memmap.info.key);
+    
     while (true)
         asm volatile ("hlt");
 }
