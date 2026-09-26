@@ -155,7 +155,7 @@ fn getPTETable(pde_paddr: Phys) []PTE {
     return getTable(PTE, pde_paddr);
 }
 
-fn getEntry(T: type, vaddr: Virt, paddr: Phys) *T {
+fn getTableEntry(T: type, vaddr: Virt, paddr: Phys) *T {
     const table = getTable(T, paddr);
     const shift = switch (T) {
         PML4E => 39,
@@ -164,23 +164,29 @@ fn getEntry(T: type, vaddr: Virt, paddr: Phys) *T {
         PTE => 12,
         else => @compileError("Unsupported page entry type."),
     };
+    // We shift for 0x1FF because inside an address, every 9 bits (starting from the first 12)
+    // are offsets in a corresponding table, depending on their possition.
+    //                  9 8 7 6 5 4 3 2 1
+    // 0x1ff = 0b 0 0 0 1 1 1 1 1 1 1 1 1
+    // 
+    // Visual explanation: SDM Volume 3, Chapter 5, Section 5.5.4
     return &table[(vaddr >> shift) & 0x1FF];
 }
 
 fn getPML4E(vaddr: Virt, cr3: Phys) *PML4E {
-    return getEntry(PML4E, vaddr, cr3);
+    return getTableEntry(PML4E, vaddr, cr3);
 }
 
 fn getPDPTE(vaddr: Virt, pdpte_table_paddr: Phys) *PDPTE {
-    return getEntry(PDPTE, vaddr, pdpte_table_paddr);
+    return getTableEntry(PDPTE, vaddr, pdpte_table_paddr);
 }
 
 fn getPDE(vaddr: Virt, pde_table_paddr: Phys) *PDE {
-    return getEntry(PDE, vaddr, pde_table_paddr);
+    return getTableEntry(PDE, vaddr, pde_table_paddr);
 }
 
 fn getPTE(vaddr: Virt, pte_table_paddr: Phys) *PTE {
-    return getEntry(PTE, vaddr, pte_table_paddr);
+    return getTableEntry(PTE, vaddr, pte_table_paddr);
 }
 
 pub const PageAttribute = enum {
