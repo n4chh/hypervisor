@@ -8,6 +8,7 @@ const FileReader = std.Io.File.Reader;
 const arch = @import("arch.zig");
 const page_size = arch.impl.page_size_4k;
 const page_mask = arch.impl.page_mask_4k;
+const defs = @import("defs.zig");
 
 // Desipite this is a global variable, the overriden of the function must be done on the
 // root file.
@@ -22,9 +23,7 @@ const Kernel = struct {
     vend: Addr,
     pages_4kib: u64,
     program: *Reader,
-    // TODO: Should we include a header field?? Is it used otherplace after parsing?
-    // headers: std.elf.Header,
-
+    headers: std.elf.Header,
 };
 
 fn loadKernel(boot_services: *uefi.tables.BootServices) uefi.Error!Kernel {
@@ -145,12 +144,12 @@ fn mapKernelMemory(kernel: *const Kernel, boot_services: *uefi.tables.BootServic
 }
 
 fn parseKernel(kernel_reader: *Reader) uefi.Error!Kernel {
-    const header =  std.elf.Header.read(kernel_reader) catch |err| {
+    var kernel: Kernel = undefined;
+    kernel.headers =  std.elf.Header.read(kernel_reader) catch |err| {
         log.err("Error reading the kernel headers: {}", .{err});
         return uefi.Error.Aborted;
     };
-    var kernel: Kernel = undefined;
-    var iter = std.elf.Header.iterateProgramHeadersBuffer(&header, kernel_reader.buffer);
+    var iter = std.elf.Header.iterateProgramHeadersBuffer(&kernel.headers, kernel_reader.buffer);
     log.debug(\\Program Headers Iterator initialized: 
               \\    Endian:                 {}
               \\    Is 64:                  {}
@@ -244,6 +243,8 @@ pub fn storeSymbols(boot_services: *uefi.tables.BootServices) uefi.Error!void {
     watchpoint_ptr.* = 0xAAAABBBB;
 }
 
+
+
 pub fn main() uefi.Error!void {
     log.info("Hello from UEFI!!", .{});
     const boot_services: *uefi.tables.BootServices = uefi.system_table.boot_services orelse {
@@ -270,13 +271,23 @@ pub fn main() uefi.Error!void {
             kernel.program.bufferedLen() / 1000,
         });
     var buf: [page_size * 4]u8 = undefined;
-    const memmap = boot_services.getMemoryMap(@alignCast(@ptrCast(&buf))) catch |err| {
+    var memmap = boot_services.getMemoryMap(@alignCast(@ptrCast(&buf))) catch |err| {
         log.err("Error retrieving UEFI memory map: {}", .{err});
         return err;
     };
-    log.info("Key for last memory map retrieved: {}", .{memmap.info.key});
+    // log.info("Key for last memory map retrieved: {}", .{memmap.info.key});
+    // We send the handle of our current UEFI App (I think so)
     try boot_services.exitBootServices(uefi.handle, memmap.info.key);
-    
-    while (true)
-        asm volatile ("hlt");
+
+
+    const kernel_entry: *fn(defs.BootInfo) callconv(.winapi) noreturn = @ptrFromInt(kernel.headers.entry);
+    const boot_info: defs.BootInfo = .{
+        .magic = defs.magic,
+        .memory_map = &memmap,
+    };
+    kernel_entry(boot_info);
+    log.err("Something went wrong...");
+    unreachable;
+    // while (true)
+    //     asm volatile ("hlt");
 }
