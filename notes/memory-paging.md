@@ -33,6 +33,8 @@ Memory paging is enabled by a `mov` instruction to `CR0`. There are 4 different 
 
 Switching between memory paging modes requires to fully disable it (unsetting `CR0`) and enabling the corresponding flags/registers for the desired mode.
 
+**Note:** See Intel SDM Volume 3, Chapter 2.5 for more information about Control Registers
+
 
 ### (TODO) Pages Entries
 Depending on the mode, page entries will vary in size and offer different capabilities.
