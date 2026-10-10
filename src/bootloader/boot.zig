@@ -169,14 +169,14 @@ fn parseKernel(kernel_reader: *Reader) uefi.Error!Kernel {
         log.debug("{d}", .{i_a});
         i_a += 1;
         log.debug("h: {any}", .{h});
-        log.debug("h.p_vaddr: 0x{X:0>16}", .{h.p_vaddr});
-        log.debug("h.p_paddr: 0x{X:0>16}", .{h.p_paddr});
-        log.debug("h.p_memsz: 0x{X}", .{h.p_memsz});
-        if (h.p_type != std.elf.PT_LOAD) continue;
+        log.debug("h.vaddr: 0x{X:0>16}", .{h.vaddr});
+        log.debug("h.paddr: 0x{X:0>16}", .{h.paddr});
+        log.debug("h.memsz: 0x{X}", .{h.memsz});
+        if (h.type != std.elf.PT.LOAD) continue;
         log.debug("PT_LOAD Header found.", .{});
-        if (h.p_vaddr < kernel.vstart) kernel.vstart = h.p_vaddr;
-        if (h.p_paddr < kernel.pstart) kernel.pstart = h.p_paddr;
-        if (h.p_paddr + h.p_memsz > kernel.pend) kernel.pend = h.p_paddr + h.p_memsz;
+        if (h.vaddr < kernel.vstart) kernel.vstart = h.vaddr;
+        if (h.paddr < kernel.pstart) kernel.pstart = h.paddr;
+        if (h.paddr + h.memsz > kernel.pend) kernel.pend = h.paddr + h.memsz;
     }
     log.debug(\\PT_LOAD Headers analized
         \\  Kernel Start Virtual Address:   0x{X:0>16}

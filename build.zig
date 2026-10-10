@@ -105,8 +105,6 @@ pub fn build(b: *std.Build) void {
         ovmf_path,
         // "-drive",
         // "if=pflash,format=raw,unit=0,file.filename=" ++ ovmf_path ++ ",file.locking=off,readonly=on",
-        "-drive",
-        b.fmt("file=fat:rw:{s}/{s},format=raw", .{ b.install_path, IMG_DIR_NAME }),
         "-nographic",
         "-serial",
         "mon:stdio",
@@ -121,8 +119,6 @@ pub fn build(b: *std.Build) void {
         "512M",
         "-L",
         "/Users/nachh/Library/Containers/com.utmapp.UTM/Data/Library/Caches/qemu",
-        "-drive",
-        b.fmt("file=fat:rw:{s}/{s},format=raw", .{ b.install_path, IMG_DIR_NAME }),
         "-nographic",
         "-serial",
         "mon:stdio",
@@ -132,6 +128,10 @@ pub fn build(b: *std.Build) void {
         // "if=pflash,format=raw,unit=0,file.filename=" ++ ovmf_path ++ ",file.locking=off,readonly=on",
     };
 
+    const img_wf = b.addWriteFiles();
+    _ = img_wf.addCopyFile(kernel.getEmittedBin(), kernel.name);
+    _ = img_wf.addCopyFile(bootloader.getEmittedBin(), b.fmt("efi/boot/{s}", .{bootloader.name}));
+
     var qemu_cmd: *std.Build.Step.Run = undefined;
     if (b.graph.host.result.os.tag == .macos) {
         qemu_cmd = b.addSystemCommand(&macos_qemu_args);
@@ -139,7 +139,11 @@ pub fn build(b: *std.Build) void {
         qemu_cmd = b.addSystemCommand(&qemu_args);
     }
     qemu_cmd.step.dependOn(b.getInstallStep());
-
+    qemu_cmd.addArg("-drive");
+    qemu_cmd.addDirectoryArg2(img_wf.getDirectory(), .{
+        .prefix = "file=fat:rw:",
+        .suffix = ",format=raw",
+    });
     const run_qemu_step = b.step("run", "Run QEMU");
     run_qemu_step.dependOn(&qemu_cmd.step);
 
@@ -149,11 +153,20 @@ pub fn build(b: *std.Build) void {
     } else {
         debug_qemu_cmd = b.addSystemCommand(&qemu_args ++ [_][]const u8{"-S", "-s"});
     }
+    debug_qemu_cmd.addArg("-drive");
+    debug_qemu_cmd.addDirectoryArg2(img_wf.getDirectory(), .{
+        .prefix = "file=fat:rw:",
+        .suffix = ",format=raw",
+    });
     debug_qemu_cmd.step.dependOn(b.getInstallStep());
 
     const debug_qemu_step = b.step("debug", "Run QEMU and stop execution before boot.");
     debug_qemu_step.dependOn(&debug_qemu_cmd.step);
-
+    b.installDirectory(.{
+        .install_dir = .prefix,
+        .install_subdir = IMG_DIR_NAME,
+        .source_dir = img_wf.getDirectory(),
+    });
 }
 
 // Find OVMF firmware device
