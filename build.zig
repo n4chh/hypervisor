@@ -83,11 +83,14 @@ pub fn buildKernel(b: *std.Build) *std.Build.Step.Compile {
 
 pub fn build(b: *std.Build) void {
     const ovmf_path = b.option([]const u8, "ovmf-path", "Path to OVMF firmware file") orelse findOvmfPath(b);
-    const log_level_str = b.option([]const u8, "log-level", "Log level of the application.") orelse "info";
-    const log_level: std.log.Level = std.meta.stringToEnum(std.log.Level, log_level_str) orelse @panic("Invalid log level provided");
+    // const log_level_str = b.option([]const u8, "log-level", "Log level of the application.") orelse "info";
+    // const log_level: std.log.Level = std.meta.stringToEnum(std.log.Level, log_level_str) orelse @panic("Invalid log level provided");
+    const log_level = b.option(std.log.Level, "log-level", "Log level of the application.") orelse std.log.Level.info;
+    const colored_output_str = b.option(bool, "color", "Colored output") orelse false;
 
     const build_options = b.addOptions();
     build_options.addOption(std.log.Level, "log_level", log_level);
+    build_options.addOption(bool, "colored_output", colored_output_str);
 
     const bootloader = buildUefi(b);
     setupBootloaderTests(b, build_options);

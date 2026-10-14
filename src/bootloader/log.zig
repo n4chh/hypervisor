@@ -26,28 +26,36 @@ const LogError = std.Io.Writer.Error;
 
 // Let's have this as const, there is no need to change the log on runtime (yet)
 const LogLevel: std.log.Level = @enumFromInt(@intFromEnum(build_options.log_level));
+const ColoredOutput: bool = build_options.colored_output;
 
 // Create the main function that implement the Zig's log function
 fn log(comptime level: std.log.Level, comptime scope: @TypeOf(.enum_literal), comptime fmt: []const u8, args: anytype) void {
     const con_out = std.os.uefi.system_table.con_out orelse unreachable;
     const scope_str = if (scope == .default) ": " else "(" ++ @tagName(scope) ++ "): ";
     if (@intFromEnum(LogLevel) < @intFromEnum(level)) return;
-    // Color codes that are avobe 0x07 (everything avobe lightgrey) are bright colors, 
-    // which in our terminal will look like bold colors.
-    // https://uefi.org/specs/UEFI/2.10_A/12_Protocols_Console_Support.html#efi-simple-text-output-protocol-setattribute
-    con_out.setAttribute(.{.foreground = .lightgray , .background = .black}) catch unreachable;
-    std.Io.Writer.print(&UefiWriter, "[", .{}) catch unreachable;
-    switch (level) {
-        .debug => con_out.setAttribute(.{.foreground = .cyan , .background = .black}) catch unreachable,
-        .info => con_out.setAttribute(.{.foreground = .blue , .background = .black}) catch unreachable,
-        .warn => con_out.setAttribute(.{.foreground = .yellow , .background = .black}) catch unreachable,
-        .err => con_out.setAttribute(.{.foreground = .lightred , .background = .black}) catch unreachable,
+
+    if (ColoredOutput) {
+        // Color codes that are avobe 0x07 (everything avobe lightgrey) are bright colors, 
+        // which in our terminal will look like bold colors.
+        // https://uefi.org/specs/UEFI/2.10_A/12_Protocols_Console_Support.html#efi-simple-text-output-protocol-setattribute
+        con_out.setAttribute(.{.foreground = .lightgray , .background = .black}) catch unreachable;
+        std.Io.Writer.print(&UefiWriter, "[", .{}) catch unreachable;
+        switch (level) {
+            .debug => con_out.setAttribute(.{.foreground = .cyan , .background = .black}) catch unreachable,
+            .info => con_out.setAttribute(.{.foreground = .blue , .background = .black}) catch unreachable,
+            .warn => con_out.setAttribute(.{.foreground = .yellow , .background = .black}) catch unreachable,
+            .err => con_out.setAttribute(.{.foreground = .lightred , .background = .black}) catch unreachable,
+        }
+        
+        std.Io.Writer.print(&UefiWriter, @tagName(level), .{}) catch unreachable;
+        con_out.setAttribute(.{.foreground = .lightgray , .background = .black}) catch unreachable;
+        // This function has changed from version 15.
+        std.Io.Writer.print(&UefiWriter, "] " ++ scope_str ++ fmt ++ "\r\n", args) catch unreachable;
+    } else {
+        std.Io.Writer.print(&UefiWriter, 
+            "[" ++ @tagName(level) ++ "] " ++ scope_str ++ fmt ++ "\r\n"
+            , args) catch unreachable;
     }
-    
-    std.Io.Writer.print(&UefiWriter, @tagName(level), .{}) catch unreachable;
-    con_out.setAttribute(.{.foreground = .lightgray , .background = .black}) catch unreachable;
-    // This function has changed from version 15.
-    std.Io.Writer.print(&UefiWriter, "] " ++ scope_str ++ fmt ++ "\r\n", args) catch unreachable;
 }
 
 pub const default_log_options = std.Options{
