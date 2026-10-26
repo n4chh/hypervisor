@@ -128,6 +128,7 @@ pub const PDE = EntryBase(.PDE);
 pub const PDPTE = EntryBase(.PDPTE);
 pub const PML4E = EntryBase(.PML4E);
 
+pub const setup = am.setup;
 
 pub const page_mask_4k: u64 = 0xFFF;
 // This is pretty straight forward, every table will have 512 if pages is of 4KiB or 2MiB.
@@ -205,7 +206,7 @@ pub fn map4kTo(vaddr: Virt, paddr: Phys, attr: PageAttribute, bs: *uefi.tables.B
         .read_write => true,
     };
 
-    const pml4e = getPML4E(vaddr, am.readCr3());
+    const pml4e = getPML4E(vaddr, am.readCr(3));
     if (!pml4e.present) try allocateNewTable(PML4E, pml4e, bs);
 
     const pdpte = getPDPTE(vaddr, pml4e.address());
@@ -230,16 +231,17 @@ pub fn map4kTo(vaddr: Virt, paddr: Phys, attr: PageAttribute, bs: *uefi.tables.B
 pub const kib = 1024;
 pub const page_size_4k = 4 * kib;
 
-pub fn setPML4TableWritable(bs: *uefi.tables.BootServices) PageError!void {
+pub fn setPML4TableWritable(bs: *uefi.tables.BootServices) PageError!Phys {
     const ptr = bs.allocatePages(.any, .boot_services_data, 1) catch |err| {
         std.log.err("Couldn't allocate page: {}", .{err});
         return PageError.NoMemory;
     };
     const new_pml4etable_ptr: [*]PML4E = @ptrFromInt(@intFromPtr(ptr.ptr));
     const new_pml4etable = new_pml4etable_ptr[0..num_table_entries];
-    const orig_pml4etable = getPML4ETable(am.readCr3());
+    const orig_pml4etable = getPML4ETable(am.readCr(3));
     @memcpy(new_pml4etable, orig_pml4etable);
-    am.loadCr3(@intFromPtr(new_pml4etable));
+    am.loadCr(3, @intFromPtr(new_pml4etable));
+    return @intFromPtr(new_pml4etable);
 }
 
 pub fn allocateNewTable(T: type, entry: *T, bs: *uefi.tables.BootServices) PageError!void {
