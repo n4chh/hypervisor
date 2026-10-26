@@ -17,7 +17,7 @@ pub const std_options = blog.default_log_options;
 const Addr = std.elf.Elf64.Addr;
 
 const Kernel = struct {
-    pstart: Addr,
+    pstart: Addr align(page_size),
     pend: Addr,
     vstart: Addr,
     vend: Addr,
@@ -84,7 +84,7 @@ fn loadKernel(boot_services: *uefi.tables.BootServices) uefi.Error!Kernel {
         log.err("Error creating the kernel Reader: {}", .{err});
         return err;
     };
-    log.info("Kernel file readed into memory.", .{});
+    log.info("Kernel file readed into memory: ", .{});
     log.debug("Closing kernel_file.", .{});
     kernel_file.close() catch |err| {
         log.err("Couldn't close file: {}", .{err});
@@ -98,11 +98,32 @@ fn loadKernel(boot_services: *uefi.tables.BootServices) uefi.Error!Kernel {
     // I think I've found UEFI docs that warns you about page privileges:
     // https://uefi.org/specs/UEFI/2.10/02_Overview.html#x64-platforms
     log.debug("Setting CR3 to a writable page.", .{});
-    arch.impl.setPML4TableWritable(boot_services) catch |err| {
+    const pml4: arch.impl.Phys = arch.impl.setPML4TableWritable(boot_services) catch |err| {
         log.err("Memory error: {}", .{err});
         return uefi.Error.Aborted;
     };
+    log.info("CR3 Pointing to our PML4 Table: 0x{x}", .{pml4});
+    
     try mapKernelMemory(&kernel, boot_services);
+
+    log.info("Loading kernel to PML4", .{});  
+    var i_a: u8 = 0;
+    var iter = std.elf.Header.iterateProgramHeadersBuffer(&kernel.headers, kernel_reader.buffer);
+    while (iter.next() catch |err| {
+        log.err("Error iterating kernel headers: {}", .{err});
+        return uefi.Error.LoadError;
+    }) |h| {
+        log.debug("{d}", .{i_a});
+        i_a += 1;
+        log.debug("h: {any}", .{h});
+        log.debug("h.vaddr: 0x{X:0>16}", .{h.vaddr});
+        log.debug("h.paddr: 0x{X:0>16}", .{h.paddr});
+        log.debug("h.memsz: 0x{X}", .{h.memsz});
+        log.debug("h.offset: 0x{X}", .{h.offset});
+        if (h.type != std.elf.PT.LOAD) continue;
+        const segment: [*]u8 = @ptrFromInt(h.vaddr);
+        @memcpy(segment, kernel_reader.buffer[h.offset..h.memsz]);
+    }
 
     return kernel;
 }
@@ -120,12 +141,12 @@ fn createKernelReader(kernel: *uefi.protocol.File, boot_services: *uefi.tables.B
         \\Kernel file opened and memory allocated:
         \\  kernel_info: {*}
         \\  buff:        {*}
-        , .{kernel_info, &buf});
+        , .{kernel_info, kernel_buffer});
     const bytes_readed = kernel.read(kernel_buffer) catch |err| {
         log.err("Error reading kernel file: {}", .{err});
         return err;
     };
-    log.debug("Kernel bytes readed: {d}", .{bytes_readed});
+    log.debug("Kernel bytes readed: {d} - 0x{X:0>16}", .{bytes_readed, bytes_readed});
 
     const reader = Reader.fixed(kernel_buffer);
     return reader;
@@ -263,12 +284,14 @@ pub fn main() uefi.Error!void {
         \\  Virtual Addr Start:     0x{X:0>16}
         \\  Pages mapped:           {d}
         \\  Program size:           {d}kb
+        \\  Entry Point:           {X:0>16}
         , .{
-            kernel.vstart,
             kernel.pstart,
             kernel.pend,
+            kernel.vstart,
             kernel.pages_4kib,
             kernel.program.bufferedLen() / 1000,
+            kernel.headers.entry,
         });
     var buf: [page_size * 4]u8 = undefined;
     var memmap = boot_services.getMemoryMap(@alignCast(@ptrCast(&buf))) catch |err| {
